@@ -46,11 +46,12 @@ var NonOverridableApplyReqs = []string{PoliciesPassedCommandReq}
 
 // GlobalCfg is the final parsed version of server-side repo config.
 type GlobalCfg struct {
-	Repos      []Repo
-	Workflows  map[string]Workflow
-	PolicySets PolicySets
-	Metrics    Metrics
-	TeamAuthz  TeamAuthz
+	Repos                []Repo
+	Workflows            map[string]Workflow
+	PolicySets           PolicySets
+	Metrics              Metrics
+	TeamAuthz            TeamAuthz
+	DefaultExecutionMode *ExecutionMode // Default execution mode for projects when not specified in repo config
 }
 
 type Metrics struct {
@@ -118,6 +119,8 @@ type MergedProjectCfg struct {
 	PolicyCheck               bool
 	CustomPolicyCheck         bool
 	SilencePRComments         []string
+	ExecutionMode             *ExecutionMode
+	AgentPoolSelector         *AgentPoolSelector
 }
 
 // WorkflowHook is a map of custom run commands to run before or after workflows.
@@ -196,6 +199,7 @@ type GlobalCfgArgs struct {
 	PolicyCheckEnabled   bool
 	PreWorkflowHooks     []*WorkflowHook
 	PostWorkflowHooks    []*WorkflowHook
+	DefaultExecutionMode string
 }
 
 func NewGlobalCfgFromArgs(args GlobalCfgArgs) GlobalCfg {
@@ -231,6 +235,13 @@ func NewGlobalCfgFromArgs(args GlobalCfgArgs) GlobalCfg {
 		allowCustomWorkflows = true
 	}
 
+	// Parse default execution mode if provided
+	var defaultExecMode *ExecutionMode
+	if args.DefaultExecutionMode != "" {
+		mode := ExecutionMode(args.DefaultExecutionMode)
+		defaultExecMode = &mode
+	}
+
 	return GlobalCfg{
 		Repos: []Repo{
 			{
@@ -260,6 +271,7 @@ func NewGlobalCfgFromArgs(args GlobalCfgArgs) GlobalCfg {
 		TeamAuthz: TeamAuthz{
 			Args: make([]string, 0),
 		},
+		DefaultExecutionMode: defaultExecMode,
 	}
 }
 
@@ -428,6 +440,8 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		PolicyCheck:               policyCheck,
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
+		ExecutionMode:             g.resolveExecutionMode(proj.ExecutionMode),
+		AgentPoolSelector:         proj.AgentPoolSelector,
 	}
 }
 
@@ -453,7 +467,18 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 		PolicyCheck:               policyCheck,
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
+		ExecutionMode:             g.DefaultExecutionMode,
+		AgentPoolSelector:         nil,
 	}
+}
+
+// resolveExecutionMode returns the project execution mode if explicitly set,
+// otherwise returns the default execution mode from global config.
+func (g GlobalCfg) resolveExecutionMode(projectMode *ExecutionMode) *ExecutionMode {
+	if projectMode != nil {
+		return projectMode
+	}
+	return g.DefaultExecutionMode
 }
 
 // RepoAutoDiscoverCfg returns the AutoDiscover config from the global config

@@ -1,0 +1,82 @@
+# Example: Repo-level Configuration with Distributed Execution
+
+# This atlantis.yaml file shows how to configure execution mode
+# for distributed agent-based execution
+
+version: 3
+
+# Projects configuration
+projects:
+  # Production project - runs on labeled agents in production cluster
+  - name: production-infrastructure
+    dir: terraform/production
+    workspace: production
+    
+    # Enable distributed execution for this project
+    execution_mode: distributed
+    
+    # Require agents with specific labels
+    agent_pool_selector:
+      labels:
+        environment: production
+        region: us-east-1
+        compliance: soc2
+        tier: high-capacity
+    
+    terraform_version: v1.7.0
+    
+    # Custom workflow still supported
+    workflow: production-workflow
+    
+    # Apply requirements
+    apply_requirements: [approved, mergeable]
+    
+  # Development project - runs locally on master server
+  - name: development-infrastructure
+    dir: terraform/development
+    workspace: development
+    
+    # Use local execution (default, backwards compatible)
+    execution_mode: local
+    
+    terraform_version: v1.7.0
+    autoplan:
+      when_modified: ["*.tf", "*.tfvars"]
+  
+  # Multi-region setup - different agents per region
+  - name: us-west-2-infrastructure
+    dir: terraform/regions/us-west-2
+    workspace: production
+    execution_mode: distributed
+    agent_pool_selector:
+      labels:
+        region: us-west-2
+        environment: production
+  
+  - name: eu-west-1-infrastructure
+    dir: terraform/regions/eu-west-1
+    workspace: production
+    execution_mode: distributed
+    agent_pool_selector:
+      labels:
+        region: eu-west-1
+        environment: production
+
+# Custom workflows
+workflows:
+  production-workflow:
+    plan:
+      steps:
+        - init
+        - run: terraform fmt -check
+        - run: terraform validate
+        - plan
+    apply:
+      steps:
+        - run: echo "Applying to production..."
+        - apply
+        - run: echo "Deployment complete"
+
+# Parallel plan/apply configuration
+parallel_plan: true
+parallel_apply: true

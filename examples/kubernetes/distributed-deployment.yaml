@@ -1,0 +1,373 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: atlantis
+---
+# PostgreSQL Deployment (for non-production testing)
+# In production, use managed PostgreSQL (RDS, Cloud SQL, etc.)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  namespace: atlantis
+type: Opaque
+stringData:
+  username: atlantis
+  password: CHANGE_ME_IN_PRODUCTION
+  database: atlantis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: atlantis
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: atlantis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: database
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: atlantis
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+# Atlantis Master Controller Deployment (HA)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: atlantis-master-secrets
+  namespace: atlantis
+type: Opaque
+stringData:
+  github-token: CHANGE_ME
+  github-webhook-secret: CHANGE_ME
+  agent-token: CHANGE_ME_STRONG_TOKEN  # Token for agent authentication
+  db-username: atlantis
+  db-password: CHANGE_ME_IN_PRODUCTION
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlantis-master-config
+  namespace: atlantis
+data:
+  config.yaml: |
+    # Server-side repo config
+    repos:
+    - id: /.*/
+      execution_mode: distributed
+      agent_pool_selector:
+        labels:
+          default: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlantis-master
+  namespace: atlantis
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 4141
+  selector:
+    app: atlantis-master
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlantis-grpc
+  namespace: atlantis
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+  selector:
+    app: atlantis-master
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlantis-master
+  namespace: atlantis
+spec:
+  replicas: 3  # HA deployment
+  selector:
+    matchLabels:
+      app: atlantis-master
+  template:
+    metadata:
+      labels:
+        app: atlantis-master
+    spec:
+      serviceAccountName: atlantis-master
+      containers:
+      - name: atlantis
+        image: ghcr.io/runatlantis/atlantis:latest
+        args:
+        - server
+        - --atlantis-url=https://atlantis.example.com
+        - --gh-user=atlantis-bot
+        - --gh-webhook-secret-file=/secrets/github-webhook-secret
+        - --gh-token-file=/secrets/github-token
+        - --repo-allowlist=github.com/myorg/*
+        - --repo-config=/config/config.yaml
+        - --db-type=postgres
+        - --db-host=postgres.atlantis.svc.cluster.local
+        - --db-port=5432
+        - --db-name=atlantis
+        - --db-user-file=/secrets/db-username
+        - --db-password-file=/secrets/db-password
+        - --grpc-port=50051
+        - --grpc-agent-token-file=/secrets/agent-token
+        - --grpc-port=50051
+        - --execution-mode=distributed
+        - --default-execution-mode=distributed
+        - --locking-db-type=postgres
+        ports:
+        - name: http
+          containerPort: 4141
+        - name: grpc
+          containerPort: 50051
+        env:
+        - name: ATLANTIS_EXECUTION_MODE
+          value: "distributed"
+        volumeMounts:
+        - name: secrets
+          mountPath: /secrets
+          readOnly: true
+        - name: config
+          mountPath: /config
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 4141
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 4141
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 500m
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+      volumes:
+      - name: secrets
+        secret:
+          secretName: atlantis-master-secrets
+          items:
+          - key: github-token
+            path: github-token
+          - key: github-webhook-secret
+            path: github-webhook-secret
+          - key: agent-token
+            path: agent-token
+          - key: db-username
+            path: db-username
+          - key: db-password
+            path: db-password
+      - name: config
+        configMap:
+          name: atlantis-master-config
+---
+# ServiceAccount and RBAC for master (minimal permissions)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atlantis-master
+  namespace: atlantis
+---
+# Agent Controller Deployment
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atlantis-agent-controller
+  namespace: atlantis
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: atlantis-agent-controller
+  namespace: atlantis
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "delete", "watch"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: atlantis-agent-controller
+  namespace: atlantis
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: atlantis-agent-controller
+subjects:
+- kind: ServiceAccount
+  name: atlantis-agent-controller
+  namespace: atlantis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlantis-agent-controller
+  namespace: atlantis
+spec:
+  replicas: 1  # One controller per cluster
+  selector:
+    matchLabels:
+      app: atlantis-agent-controller
+  template:
+    metadata:
+      labels:
+        app: atlantis-agent-controller
+    spec:
+      serviceAccountName: atlantis-agent-controller
+      containers:
+      - name: agent-controller
+        image: ghcr.io/runatlantis/atlantis:latest
+        args:
+        - agent
+        - --agent-master-address=atlantis-grpc.atlantis.svc.cluster.local:50051
+        - --agent-token-file=/secrets/agent-token
+        - --agent-cluster-name=primary-cluster
+        - --agent-namespace=atlantis
+        - --agent-capacity=20
+        - --agent-labels=region=us-east-1,environment=production,default=true
+        - --gh-app-id=xxxxxx
+        - --gh-app-key-file=/var/github-app/key.pem
+        - --agent-mode=ephemeral
+        env:
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: ATLANTIS_AGENT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: secrets
+          mountPath: /secrets
+          readOnly: true
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+      volumes:
+      - name: secrets
+        secret:
+          secretName: atlantis-master-secrets
+          items:
+          - key: agent-token
+            path: agent-token
+---
+# HorizontalPodAutoscaler for master (optional)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: atlantis-master
+  namespace: atlantis
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: atlantis-master
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# PodDisruptionBudget for HA
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: atlantis-master
+  namespace: atlantis
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: atlantis-master

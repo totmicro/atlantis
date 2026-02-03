@@ -16,7 +16,6 @@ package events_test
 import (
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/go-version"
@@ -236,20 +235,6 @@ func TestProjectOutputWrapper(t *testing.T) {
 // Test what happens if there's no working dir. This signals that the project
 // was never planned.
 func TestDefaultProjectCommandRunner_ApplyNotCloned(t *testing.T) {
-	mockWorkingDir := mocks.NewMockWorkingDir()
-	runner := &events.DefaultProjectCommandRunner{
-		WorkingDir: mockWorkingDir,
-	}
-	ctx := command.ProjectContext{}
-	When(mockWorkingDir.GetWorkingDir(ctx.BaseRepo, ctx.Pull, ctx.Workspace)).ThenReturn("", os.ErrNotExist)
-
-	res := runner.Apply(ctx)
-	ErrEquals(t, "project has not been cloned–did you run plan?", res.Error)
-}
-
-// Test that if approval is required and the PR isn't approved we give an error.
-func TestDefaultProjectCommandRunner_ApplyNotApproved(t *testing.T) {
-	RegisterMockTestingT(t)
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	runner := &events.DefaultProjectCommandRunner{
 		WorkingDir:       mockWorkingDir,

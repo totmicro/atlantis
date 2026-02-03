@@ -4,6 +4,8 @@
 package command
 
 import (
+	"strings"
+
 	"github.com/runatlantis/atlantis/server/events/models"
 )
 
@@ -82,6 +84,13 @@ func (p ProjectResult) PlanStatus() models.ProjectPlanStatus {
 			return models.ErroredApplyStatus
 		} else if p.Failure != "" {
 			return models.ErroredApplyStatus
+		}
+		// Check if this is a queued job (in distributed mode).
+		// Queued jobs have ApplySuccess starting with [ATLANTIS_QUEUED_JOB].
+		// These should remain in PlannedPlanStatus (pending apply) to keep
+		// VCS checks in "pending" state until agents complete the actual apply.
+		if strings.HasPrefix(p.ApplySuccess, "[ATLANTIS_QUEUED_JOB]") {
+			return models.PlannedPlanStatus
 		}
 		return models.AppliedPlanStatus
 	}

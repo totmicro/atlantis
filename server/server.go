@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
@@ -41,12 +42,16 @@ import (
 	tally "github.com/uber-go/tally/v4"
 	prometheus "github.com/uber-go/tally/v4/prometheus"
 	"github.com/urfave/negroni/v3"
+	"google.golang.org/grpc"
 
+	"github.com/runatlantis/atlantis/proto"
+	"github.com/runatlantis/atlantis/server/core/agent"
 	"github.com/runatlantis/atlantis/server/core/boltdb"
 	cfg "github.com/runatlantis/atlantis/server/core/config"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/redis"
+	"github.com/runatlantis/atlantis/server/core/scheduler"
 	"github.com/runatlantis/atlantis/server/core/terraform/tfclient"
 	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/metrics"
@@ -101,6 +106,7 @@ type Server struct {
 	AtlantisURL                    *url.URL
 	Router                         *mux.Router
 	Port                           int
+	GRPCPort                       int
 	PostWorkflowHooksCommandRunner *events.DefaultPostWorkflowHooksCommandRunner
 	PreWorkflowHooksCommandRunner  *events.DefaultPreWorkflowHooksCommandRunner
 	CommandRunner                  *events.DefaultCommandRunner
@@ -116,6 +122,10 @@ type Server struct {
 	StatusController               *controllers.StatusController
 	JobsController                 *controllers.JobsController
 	APIController                  *controllers.APIController
+	pgDB                           *db.PostgresDB
+	grpcServer                     *grpc.Server
+	agentStore                     db.AgentStore
+	jobStore                       db.JobStore
 	IndexTemplate                  web_templates.TemplateWriter
 	LockDetailTemplate             web_templates.TemplateWriter
 	ProjectJobsTemplate            web_templates.TemplateWriter
@@ -208,9 +218,16 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 
 	parserValidator := &cfg.ParserValidator{}
 
+	// If default-execution-mode not explicitly set, use execution-mode value
+	defaultExecMode := userConfig.DefaultExecutionMode
+	if defaultExecMode == "" {
+		defaultExecMode = userConfig.ExecutionMode
+	}
+
 	globalCfg := valid.NewGlobalCfgFromArgs(
 		valid.GlobalCfgArgs{
-			PolicyCheckEnabled: userConfig.EnablePolicyChecksFlag,
+			PolicyCheckEnabled:   userConfig.EnablePolicyChecksFlag,
+			DefaultExecutionMode: defaultExecMode,
 		})
 	if userConfig.RepoConfig != "" {
 		globalCfg, err = parserValidator.ParseGlobalCfg(userConfig.RepoConfig, globalCfg)
@@ -501,12 +518,140 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
+	case "postgres":
+		logger.Info("Utilizing PostgreSQL for locking")
+		// For distributed mode with PostgreSQL, we'll initialize the PostgreSQL connection
+		// below and use it for both the new job system and legacy locking
+		if userConfig.ExecutionMode != "distributed" {
+			return nil, fmt.Errorf("postgres locking-db-type requires execution-mode=distributed")
+		}
+		// Database will be set after PostgreSQL initialization in distributed mode section
+		// Set to a temporary placeholder to pass initial validation
+		database = nil
 	case "boltdb":
 		logger.Info("Utilizing BoltDB")
 		database, err = boltdb.New(userConfig.DataDir)
 		if err != nil {
 			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("invalid locking-db-type %q, must be one of: redis, postgres, boltdb", dbtype)
+	}
+
+	// Initialize distributed mode if enabled - MUST happen before creating locking clients
+	var pgDB *db.PostgresDB
+	var grpcServer *grpc.Server
+	var agentStore db.AgentStore
+	var jobStore db.JobStore
+	var agentScheduler *scheduler.DefaultScheduler
+	var agentService *agent.GRPCServer // Declare at function level so it can be accessed later
+	if userConfig.ExecutionMode == "distributed" {
+		logger.Info("Initializing distributed execution mode")
+
+		// Initialize PostgreSQL for job queue
+		dbCfg := db.Config{
+			Host:            userConfig.DBHost,
+			Port:            userConfig.DBPort,
+			User:            userConfig.DBUser,
+			Password:        userConfig.DBPassword,
+			Database:        userConfig.DBName,
+			SSLMode:         userConfig.DBSSLMode,
+			MaxOpenConns:    userConfig.DBMaxOpenConns,
+			MaxIdleConns:    userConfig.DBMaxIdleConns,
+			ConnMaxLifetime: time.Duration(userConfig.DBConnMaxLifetimeSeconds) * time.Second,
+		}
+
+		pgDB, err = db.NewPostgresDB(dbCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize PostgreSQL: %w", err)
+		}
+
+		logger.Info("PostgreSQL connection established")
+
+		// Run migrations with automatic dirty state recovery
+		logger.Info("Running database migrations")
+		migrator := db.NewMigrator(pgDB.DB())
+
+		if err := migrator.Up(); err != nil {
+			return nil, fmt.Errorf("failed to run migrations: %w", err)
+		}
+
+		// Verify final state
+		version, dirty, err := migrator.Version()
+		if err != nil {
+			logger.Info("Database migrations completed")
+		} else if dirty {
+			return nil, fmt.Errorf("database still in dirty state after migrations at version %d", version)
+		} else {
+			logger.Info(fmt.Sprintf("Database migrations completed successfully at version %d", version))
+		}
+
+		// If using postgres for locking, create adapter for legacy Database interface
+		if userConfig.LockingDBType == "postgres" {
+			logger.Info("Using PostgreSQL for legacy locking interface")
+			database = db.NewPostgresLockAdapter(db.NewPostgresLockStore(pgDB.DB()), pgDB.DB())
+		} else if database == nil {
+			// If not using postgres for locking but in distributed mode, still need a database for validation
+			// Use BoltDB as fallback for legacy locking
+			logger.Info("Initializing BoltDB for legacy locking (distributed mode with non-postgres locking)")
+			database, err = boltdb.New(userConfig.DataDir)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize fallback BoltDB: %w", err)
+			}
+		}
+
+		// Initialize gRPC server for agent connections
+		logger.Info("Initializing gRPC server for agent connections on port %d", userConfig.GRPCPort)
+
+		// Create stores for agents and jobs (assigned to function-level vars for Server struct)
+		agentStore = db.NewPostgresAgentStore(pgDB.DB())
+		jobStore = db.NewPostgresJobStore(pgDB.DB())
+
+		// Create agent registry
+		agentRegistry := agent.NewRegistry(agentStore, logger)
+
+		// Create scheduler with default configuration
+		agentScheduler = scheduler.NewScheduler(jobStore, agentStore, logger, scheduler.DefaultRouterConfig())
+
+		// Create gRPC server with authentication
+		authInterceptor := agent.NewAuthInterceptor(agentRegistry, userConfig.GRPCAgentToken, logger)
+		grpcServer = grpc.NewServer(
+			grpc.UnaryInterceptor(authInterceptor.Unary()),
+			grpc.StreamInterceptor(authInterceptor.Stream()),
+		)
+
+		// Register agent service (pass shared token for auto-registration)
+		agentService = agent.NewGRPCServer(agentRegistry, agentScheduler, jobStore, userConfig.GRPCAgentToken, logger)
+		proto.RegisterAgentServiceServer(grpcServer, agentService)
+
+		// Set VCS credentials for repository cloning by agents
+		if githubAppEnabled && githubCredentials != nil {
+			// GitHub App - use dynamic token generation
+			credGetter := agent.NewGitHubAppCredentialsGetter(githubCredentials, logger)
+			agentService.SetVCSCredentialsGetter(credGetter)
+			logger.Info("VCS credentials configured for agent repository cloning (GitHub App - dynamic tokens)")
+		} else if userConfig.GithubUser != "" && userConfig.GithubToken != "" {
+			// Static GitHub credentials
+			agentService.SetVCSCredentials(userConfig.GithubUser, userConfig.GithubToken)
+			logger.Info("VCS credentials configured for agent repository cloning (GitHub static)")
+		} else if userConfig.GitlabUser != "" && userConfig.GitlabToken != "" {
+			// Static GitLab credentials
+			agentService.SetVCSCredentials(userConfig.GitlabUser, userConfig.GitlabToken)
+			logger.Info("VCS credentials configured for agent repository cloning (GitLab)")
+		} else {
+			logger.Warn("No VCS credentials configured for agents - repository cloning will fail")
+		}
+
+		// Connect scheduler to gRPC server for job notifications
+		agentScheduler.SetJobNotifier(agentService)
+		logger.Info("scheduler connected to gRPC server for job notifications")
+
+		// Start background job assignment loop
+		agentScheduler.Start()
+		logger.Info("scheduler assignment loop started")
+
+		logger.Info("Agent gRPC service registered")
+		logger.Info("Distributed mode initialized (job queueing enabled)")
 	}
 
 	noOpLocker := locking.NewNoOpLocker()
@@ -612,7 +757,22 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	)
 	defaultTfDistribution := terraformClient.DefaultDistribution()
 	defaultTfVersion := terraformClient.DefaultVersion()
-	pendingPlanFinder := &events.DefaultPendingPlanFinder{}
+
+	// Create pendingPlanFinder based on execution mode
+	var pendingPlanFinder events.PendingPlanFinder
+	if userConfig.ExecutionMode == "distributed" && jobStore != nil {
+		// In distributed mode, plans are in the database, not on disk
+		pendingPlanFinder = &events.DistributedPendingPlanFinder{
+			JobStore: jobStore,
+			Logger:   logger,
+		}
+		logger.Info("using distributed pending plan finder (database-backed)")
+	} else {
+		// Local mode: plans are on disk as .tfplan files
+		pendingPlanFinder = &events.DefaultPendingPlanFinder{}
+		logger.Debug("using default pending plan finder (file-based)")
+	}
+
 	runStepRunner := &runtime.RunStepRunner{
 		TerraformExecutor:       terraformClient,
 		DefaultTFDistribution:   defaultTfDistribution,
@@ -696,6 +856,13 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 
 	cancellationTracker := events.NewCancellationTracker()
 
+	// Create distributed scheduler if in distributed mode
+	var distributedScheduler *events.DistributedScheduler
+	if userConfig.ExecutionMode == "distributed" && agentScheduler != nil && jobStore != nil {
+		distributedScheduler = events.NewDistributedScheduler(agentScheduler, jobStore.(*db.PostgresJobStore), logger, globalCfg)
+		logger.Info("distributed job scheduler initialized for project command execution")
+	}
+
 	projectCommandRunner := &events.DefaultProjectCommandRunner{
 		VcsClient:        vcsClient,
 		Locker:           projectLocker,
@@ -735,6 +902,9 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		WorkingDirLocker:          workingDirLocker,
 		CommandRequirementHandler: applyRequirementHandler,
 		CancellationTracker:       cancellationTracker,
+		CommitStatusUpdater:       commitStatusUpdater,             // For setting per-project VCS status
+		JobScheduler:              distributedScheduler,            // For distributed execution
+		JobStore:                  jobStore.(*db.PostgresJobStore), // PostgreSQL job store for plan storage
 	}
 
 	dbUpdater := &events.DBUpdater{
@@ -745,6 +915,15 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		HidePrevPlanComments: userConfig.HidePrevPlanComments,
 		VCSClient:            vcsClient,
 		MarkdownRenderer:     markdownRenderer,
+	}
+
+	// Set up result handler for distributed jobs now that dbUpdater and pullUpdater are created
+	if agentService != nil {
+		resultUpdater := events.NewDistributedResultUpdater(dbUpdater, pullUpdater, commitStatusUpdater)
+		// commitStatusUpdater implements jobs.ProjectStatusUpdater interface
+		resultHandler := agent.NewDistributedJobResultHandler(resultUpdater, commitStatusUpdater, logger)
+		agentService.SetResultHandler(resultHandler)
+		logger.Info("result handler configured for posting to PRs using standard Atlantis mechanisms")
 	}
 
 	autoMerger := &events.AutoMerger{
@@ -1047,7 +1226,12 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		WebPassword:                    userConfig.WebPassword,
 		ScheduledExecutorService:       scheduledExecutorService,
 		EnableProfilingAPI:             userConfig.EnableProfilingAPI,
+		GRPCPort:                       userConfig.GRPCPort,
 		database:                       database,
+		pgDB:                           pgDB,       // Keep PostgreSQL connection alive
+		grpcServer:                     grpcServer, // gRPC server for agent connections (nil if not distributed mode)
+		agentStore:                     agentStore, // Keep agent store alive for distributed mode
+		jobStore:                       jobStore,   // Keep job store alive for distributed mode
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
@@ -1125,6 +1309,22 @@ func (s *Server) Start() error {
 	tlsConfig := &tls.Config{GetCertificate: s.GetSSLCertificate, MinVersion: tls.VersionTLS12}
 
 	server := &http.Server{Addr: fmt.Sprintf(":%d", s.Port), Handler: n, TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second}
+
+	// Start gRPC server for agent connections if in distributed mode
+	if s.grpcServer != nil {
+		grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.GRPCPort))
+		if err != nil {
+			return fmt.Errorf("failed to start gRPC listener: %w", err)
+		}
+
+		go func() {
+			s.Logger.Info("gRPC server started - listening for agent connections on port %v", s.GRPCPort)
+			if err := s.grpcServer.Serve(grpcListener); err != nil {
+				s.Logger.Err("gRPC server error: %v", err)
+			}
+		}()
+	}
+
 	go func() {
 		s.Logger.Info("Atlantis started - listening on port %v", s.Port)
 
@@ -1149,9 +1349,25 @@ func (s *Server) Start() error {
 		s.Logger.Err(err.Error())
 	}
 
-	// Attempt to close the database
-	if err := s.closeDatabase(1 * time.Second); err != nil {
-		s.Logger.Err("while closing database: %v", err)
+	// Stop gRPC server if running
+	if s.grpcServer != nil {
+		s.Logger.Info("Shutting down gRPC server")
+		s.grpcServer.GracefulStop()
+	}
+
+	// Close PostgreSQL connection if in distributed mode
+	if s.pgDB != nil {
+		s.Logger.Info("Closing PostgreSQL connection")
+		if err := s.pgDB.Close(); err != nil {
+			s.Logger.Err("while closing PostgreSQL: %v", err)
+		}
+		// Note: Don't call closeDatabase() when using PostgresLockAdapter
+		// because it shares the same underlying connection that pgDB.Close() closes
+	} else {
+		// Attempt to close the database (BoltDB or Redis)
+		if err := s.closeDatabase(1 * time.Second); err != nil {
+			s.Logger.Err("while closing database: %v", err)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

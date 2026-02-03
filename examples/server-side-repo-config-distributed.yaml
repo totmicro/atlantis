@@ -1,0 +1,100 @@
+# Example: Server-side Repo Config with Mixed Execution Modes
+
+# This server-side config shows how to configure default execution modes
+# and agent pool selectors at the server level
+
+repos:
+  # Production repositories - always use distributed execution
+  - id: /.*-prod$/
+    execution_mode: distributed
+    agent_pool_selector:
+      labels:
+        tier: production
+        compliance: required
+    
+    apply_requirements:
+      - approved
+      - mergeable
+    
+    allowed_overrides:
+      - workflow
+      - apply_requirements
+    
+    # Don't allow repos to override execution mode for production
+    allowed_overrides_exclude:
+      - execution_mode
+      - agent_pool_selector
+  
+  # Infrastructure repositories - use distributed with region-specific agents
+  - id: github.com/myorg/infrastructure-.*
+    execution_mode: distributed
+    
+    # Default labels - can be overridden per project
+    agent_pool_selector:
+      labels:
+        team: infrastructure
+        priority: high
+    
+    workflow: infrastructure-workflow
+    
+    allowed_overrides:
+      - agent_pool_selector  # Allow project-level override
+      - workflow
+      - terraform_version
+  
+  # Development/testing - use local execution by default
+  - id: /.*-(dev|test|staging)$/
+    execution_mode: local
+    
+    allowed_overrides:
+      - execution_mode  # Allow switching to distributed if needed
+      - workflow
+  
+  # Specific repos with custom configuration
+  - id: github.com/myorg/critical-infrastructure
+    execution_mode: distributed
+    agent_pool_selector:
+      labels:
+        tier: critical
+        dedicated: "true"
+        region: us-east-1
+    
+    apply_requirements:
+      - approved
+      - mergeable
+    
+    # No overrides allowed for critical infrastructure
+    allowed_overrides: []
+  
+  # Default for all other repos - local execution
+  - id: /.*/
+    execution_mode: local
+    
+    allowed_overrides:
+      - execution_mode
+      - workflow
+      - apply_requirements
+
+# Workflows
+workflows:
+  infrastructure-workflow:
+    plan:
+      steps:
+        - init
+        - run: |
+            echo "Running security scan..."
+            tfsec .
+        - run: terraform validate
+        - plan
+    apply:
+      steps:
+        - run: echo "Starting deployment..."
+        - apply
+        - run: |
+            echo "Deployment successful"
+            # Could send notification here
+
+# Metrics configuration
+metrics:
+  prometheus: true
+  statsd: false

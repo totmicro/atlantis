@@ -23,11 +23,13 @@ import (
 	"strings"
 
 	"github.com/runatlantis/atlantis/server/core/config/valid"
+	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/events/vcs"
 	"github.com/runatlantis/atlantis/server/events/webhooks"
+	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/logging"
 )
 
@@ -49,6 +51,13 @@ func (d DirNotExistErr) Error() string {
 type LockURLGenerator interface {
 	// GenerateLockURL returns the full URL to the lock at lockID.
 	GenerateLockURL(lockID string) string
+}
+
+//go:generate pegomock generate --package mocks -o mocks/mock_job_scheduler.go JobScheduler
+
+// JobScheduler schedules jobs for distributed execution
+type JobScheduler interface {
+	ScheduleJob(ctx command.ProjectContext) (string, error)
 }
 
 //go:generate pegomock generate --package mocks -o mocks/mock_step_runner.go StepRunner
@@ -245,10 +254,24 @@ type DefaultProjectCommandRunner struct {
 	WorkingDirLocker          WorkingDirLocker
 	CommandRequirementHandler CommandRequirementHandler
 	CancellationTracker       CancellationTracker
+	CommitStatusUpdater       jobs.ProjectStatusUpdater // For setting per-project VCS status
+	JobScheduler              JobScheduler         // For distributed execution
+	JobStore                  *db.PostgresJobStore // For distributed plan storage
 }
 
 // Plan runs terraform plan for the project described by ctx.
 func (p *DefaultProjectCommandRunner) Plan(ctx command.ProjectContext) command.ProjectCommandOutput {
+	// Debug logging to trace execution mode
+	ctx.Log.Info("plan execution mode check: ExecutionMode=%q JobScheduler=%v", ctx.ExecutionMode, p.JobScheduler != nil)
+
+	// Check if this project should be executed in distributed mode
+	if ctx.ExecutionMode == "distributed" && p.JobScheduler != nil {
+		ctx.Log.Info("using distributed execution for plan (job will be queued for agent)")
+		return p.scheduleDistributedPlan(ctx)
+	}
+
+	ctx.Log.Info("using local execution for plan (running on master)")
+	// Local execution (default)
 	planSuccess, failure, err := p.doPlan(ctx)
 	return command.ProjectCommandOutput{
 		PlanSuccess: planSuccess,
@@ -269,6 +292,17 @@ func (p *DefaultProjectCommandRunner) PolicyCheck(ctx command.ProjectContext) co
 
 // Apply runs terraform apply for the project described by ctx.
 func (p *DefaultProjectCommandRunner) Apply(ctx command.ProjectContext) command.ProjectCommandOutput {
+	// Debug logging to trace execution mode
+	ctx.Log.Info("apply execution mode check: ExecutionMode=%q JobScheduler=%v", ctx.ExecutionMode, p.JobScheduler != nil)
+
+	// Check if this project should be executed in distributed mode
+	if ctx.ExecutionMode == "distributed" && p.JobScheduler != nil {
+		ctx.Log.Info("using distributed execution for apply (job will be queued for agent)")
+		return p.scheduleDistributedApply(ctx)
+	}
+
+	ctx.Log.Info("using local execution for apply (running on master)")
+	// Local execution (default)
 	applyOut, failure, err := p.doApply(ctx)
 	return command.ProjectCommandOutput{
 		Failure:      failure,
@@ -653,13 +687,54 @@ func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*model
 }
 
 func (p *DefaultProjectCommandRunner) doApply(ctx command.ProjectContext) (applyOut string, failure string, err error) {
-	repoDir, err := p.WorkingDir.GetWorkingDir(ctx.Pull.BaseRepo, ctx.Pull, ctx.Workspace)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", "", errors.New("project has not been cloned–did you run plan?")
+	// In distributed mode (HA with multiple agents), always clone to ensure we have
+	// the exact commit that was planned, not stale cached content from previous runs
+	var repoDir string
+	if ctx.JobID != "" {
+		// Distributed mode: always clone to get the correct commit
+		ctx.Log.Info("distributed mode apply: cloning repository to ensure correct commit")
+		repoDir, err = p.WorkingDir.Clone(ctx.Log, ctx.HeadRepo, ctx.Pull, ctx.Workspace)
+		if err != nil {
+			return "", "", fmt.Errorf("cloning repository for distributed apply: %w", err)
 		}
-		return "", "", err
+		ctx.Log.Info("repository cloned successfully at commit %s", ctx.Pull.HeadCommit)
+
+		// Write plan file after clone but before running terraform steps
+		if len(ctx.PlanData) > 0 {
+			planFileName := fmt.Sprintf("%s.tfplan", ctx.Workspace)
+			if ctx.ProjectName != "" {
+				planFileName = fmt.Sprintf("%s-%s.tfplan", ctx.ProjectName, ctx.Workspace)
+			}
+			planPath := filepath.Join(repoDir, ctx.RepoRelDir, planFileName)
+			ctx.Log.Info("writing plan file to %s (%d bytes)", planPath, len(ctx.PlanData))
+
+			if err := os.WriteFile(planPath, ctx.PlanData, 0600); err != nil {
+				ctx.Log.Err("failed to write plan file: %v", err)
+				return "", "", fmt.Errorf("writing plan file: %w", err)
+			}
+			ctx.Log.Info("successfully wrote plan file for apply")
+		} else {
+			ctx.Log.Warn("no plan data available for apply - terraform may fail")
+		}
+
+		// In distributed mode, we need to run terraform init to download providers
+		// since we're working with a fresh clone
+		ctx.Log.Info("distributed mode: prepending init step to download providers")
+		initStep := valid.Step{
+			StepName: "init",
+		}
+		ctx.Steps = append([]valid.Step{initStep}, ctx.Steps...)
+	} else {
+		// Local mode: working directory should already exist from plan
+		repoDir, err = p.WorkingDir.GetWorkingDir(ctx.Pull.BaseRepo, ctx.Pull, ctx.Workspace)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", "", errors.New("project has not been cloned–did you run plan?")
+			}
+			return "", "", err
+		}
 	}
+
 	absPath := filepath.Join(repoDir, ctx.RepoRelDir)
 	if _, err = os.Stat(absPath); os.IsNotExist(err) {
 		return "", "", DirNotExistErr{RepoRelDir: ctx.RepoRelDir}
@@ -692,7 +767,18 @@ func (p *DefaultProjectCommandRunner) doApply(ctx command.ProjectContext) (apply
 	}
 	defer unlockFn()
 
+	// Note: In distributed mode, plan file should already be present from JobAssignment.plan_data
+	// The agent executor writes it before calling doApply
+
+	ctx.Log.Info("running apply steps (total steps: %d)", len(ctx.Steps))
 	outputs, err := p.runSteps(ctx.Steps, ctx, absPath)
+
+	if err != nil {
+		ctx.Log.Err("apply failed with error: %v", err)
+		ctx.Log.Err("terraform output: %s", strings.Join(outputs, "\n"))
+	} else {
+		ctx.Log.Info("apply completed successfully")
+	}
 
 	p.Webhooks.Send(ctx.Log, webhooks.ApplyResult{ // nolint: errcheck
 		Workspace:   ctx.Workspace,
@@ -830,7 +916,9 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 	var outputs []string
 
 	envs := make(map[string]string)
-	for _, step := range steps {
+	ctx.Log.Info("runSteps: starting execution of %d steps", len(steps))
+	for i, step := range steps {
+		ctx.Log.Info("runSteps: executing step %d/%d - name=%q runCommand=%q", i+1, len(steps), step.StepName, step.RunCommand)
 		var out string
 		var err error
 		switch step.StepName {
@@ -862,15 +950,19 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 			out, err = p.MultiEnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, step.Output)
 		}
 
+		ctx.Log.Info("runSteps: step %d/%d completed - name=%q err=%v", i+1, len(steps), step.StepName, err)
+
 		// Keep all policy_check outputs for custom policy checks to maintain positional alignment with policy sets
 		// Empty outputs are still appended to prevent index mismatches
 		if out != "" || (step.StepName == "policy_check" && ctx.CustomPolicyCheck) {
 			outputs = append(outputs, out)
 		}
 		if err != nil {
+			ctx.Log.Err("runSteps: step %d/%d failed - name=%q err=%v", i+1, len(steps), step.StepName, err)
 			return outputs, err
 		}
 	}
+	ctx.Log.Info("runSteps: all %d steps completed successfully", len(steps))
 	return outputs, nil
 }
 
@@ -881,4 +973,102 @@ func getMissingPolicySetNames(policySets []valid.PolicySet, receivedCount int) [
 		missing = append(missing, policySets[i].Name)
 	}
 	return missing
+}
+
+// scheduleDistributedPlan creates a job for distributed plan execution
+func (p *DefaultProjectCommandRunner) scheduleDistributedPlan(ctx command.ProjectContext) command.ProjectCommandOutput {
+	// Debug: Log Steps before calling ScheduleJob
+	ctx.Log.Info("scheduleDistributedPlan: context has %d steps", len(ctx.Steps))
+	for i, step := range ctx.Steps {
+		ctx.Log.Info("  step %d before schedule: StepName=%q RunCommand=%q ExtraArgs=%v", i, step.StepName, step.RunCommand, step.ExtraArgs)
+	}
+
+	// Check for existing lock before scheduling (distributed mode must respect locks too)
+	lockAttempt, err := p.Locker.TryLock(ctx.Log, ctx.Pull, ctx.User, ctx.Workspace, models.NewProject(ctx.Pull.BaseRepo.FullName, ctx.RepoRelDir, ctx.ProjectName), ctx.RepoLocksMode == valid.RepoLocksOnPlanMode)
+	if err != nil {
+		ctx.Log.Err("error checking lock: %v", err)
+		// Return as failure message (not error) so it shows nicely in PR comments
+		return command.ProjectCommandOutput{
+			Failure: fmt.Sprintf("Unable to check project lock: %s\n\nThis may be a temporary issue. Please try again.", err.Error()),
+		}
+	}
+	if !lockAttempt.LockAcquired {
+		// Lock is held by another PR - this will show a nice message with link to blocking PR
+		return command.ProjectCommandOutput{
+			Failure: lockAttempt.LockFailureReason,
+		}
+	}
+	ctx.Log.Debug("acquired lock for project")
+
+	// Note: Per-project plan status is already set to pending by PlanCommandRunner before scheduling
+	jobID, err := p.JobScheduler.ScheduleJob(ctx)
+	if err != nil {
+		ctx.Log.Err("failed to schedule plan job: %s", err)
+		// Release lock on scheduling failure
+		if unlockErr := lockAttempt.UnlockFn(); unlockErr != nil {
+			ctx.Log.Err("failed to release lock after scheduling error: %s", unlockErr)
+		}
+		return command.ProjectCommandOutput{
+			Error:   fmt.Errorf("scheduling plan job: %w", err),
+			Failure: "Failed to queue plan job for agent execution",
+		}
+	}
+
+	ctx.Log.Info("plan job scheduled for distributed execution (job ID: %s)", jobID)
+
+	return command.ProjectCommandOutput{
+		PlanSuccess: &models.PlanSuccess{
+			TerraformOutput: fmt.Sprintf("✓ Plan job queued for agent execution (job ID: %s)\n\nAn agent will execute this plan and post results when complete.", jobID),
+			LockURL:         "",
+			RePlanCmd:       ctx.RePlanCmd,
+			ApplyCmd:        ctx.ApplyCmd,
+		},
+	}
+}
+
+// scheduleDistributedApply creates a job for distributed apply execution
+func (p *DefaultProjectCommandRunner) scheduleDistributedApply(ctx command.ProjectContext) command.ProjectCommandOutput {
+	// Ensure CommandName is set to Apply for the scheduled job
+	ctx.CommandName = command.Apply
+
+	// Check for existing lock before scheduling (distributed mode must respect locks too)
+	lockAttempt, err := p.Locker.TryLock(ctx.Log, ctx.Pull, ctx.User, ctx.Workspace, models.NewProject(ctx.Pull.BaseRepo.FullName, ctx.RepoRelDir, ctx.ProjectName), ctx.RepoLocksMode == valid.RepoLocksOnApplyMode)
+	if err != nil {
+		ctx.Log.Err("error checking lock: %v", err)
+		// Return as failure message (not error) so it shows nicely in PR comments
+		return command.ProjectCommandOutput{
+			Failure: fmt.Sprintf("Unable to check project lock: %s\n\nThis may be a temporary issue. Please try again.", err.Error()),
+		}
+	}
+	if !lockAttempt.LockAcquired {
+		// Lock is held by another PR - this will show a nice message with link to blocking PR
+		return command.ProjectCommandOutput{
+			Failure: lockAttempt.LockFailureReason,
+		}
+	}
+	ctx.Log.Debug("acquired lock for project")
+
+	// Note: Per-project apply status is already set to pending by ApplyCommandRunner before scheduling
+
+	jobID, err := p.JobScheduler.ScheduleJob(ctx)
+	if err != nil {
+		ctx.Log.Err("failed to schedule apply job: %s", err)
+		// Release lock on scheduling failure
+		if unlockErr := lockAttempt.UnlockFn(); unlockErr != nil {
+			ctx.Log.Err("failed to release lock after scheduling error: %s", unlockErr)
+		}
+		return command.ProjectCommandOutput{
+			Error:   fmt.Errorf("scheduling apply job: %w", err),
+			Failure: "Failed to queue apply job for agent execution",
+		}
+	}
+
+	ctx.Log.Info("apply job scheduled for distributed execution (job ID: %s)", jobID)
+
+	// Return ApplySuccess with a special marker that indicates this is a queued job.
+	// The PlanStatus() method will check for this marker and return PlannedPlanStatus
+	// instead of AppliedPlanStatus, keeping VCS checks in "pending" state.
+	return command.ProjectCommandOutput{
+		ApplySuccess: fmt.Sprintf("[ATLANTIS_QUEUED_JOB]\n✓ Apply job **queued** for agent execution (job ID: %s)\n\nAgent will execute this apply and post results when complete.", jobID),
+	}
 }

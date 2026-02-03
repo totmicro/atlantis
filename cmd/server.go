@@ -73,6 +73,15 @@ const (
 	CheckoutStrategyFlag             = "checkout-strategy"
 	ConfigFlag                       = "config"
 	DataDirFlag                      = "data-dir"
+	DBHostFlag                       = "db-host"
+	DBPortFlag                       = "db-port"
+	DBUserFlag                       = "db-user"
+	DBPasswordFlag                   = "db-password"
+	DBNameFlag                       = "db-name"
+	DBSSLModeFlag                    = "db-sslmode"
+	DBMaxOpenConnsFlag               = "db-max-open-conns"
+	DBMaxIdleConnsFlag               = "db-max-idle-conns"
+	DBConnMaxLifetimeFlag            = "db-conn-max-lifetime-seconds"
 	DefaultTFDistributionFlag        = "default-tf-distribution"
 	DefaultTFVersionFlag             = "default-tf-version"
 	DisableApplyAllFlag              = "disable-apply-all"
@@ -115,6 +124,10 @@ const (
 	GitlabUserFlag                   = "gitlab-user"
 	GitlabWebhookSecretFlag          = "gitlab-webhook-secret" // nolint: gosec
 	GitlabStatusRetryEnabledFlag     = "gitlab-status-retry-enabled"
+	GRPCPortFlag                     = "grpc-port"
+	GRPCAgentTokenFlag               = "grpc-agent-token"
+	ExecutionModeFlag                = "execution-mode"
+	DefaultExecutionModeFlag         = "default-execution-mode"
 	IncludeGitUntrackedFiles         = "include-git-untracked-files"
 	APISecretFlag                    = "api-secret"
 	HidePrevPlanComments             = "hide-prev-plan-comments"
@@ -175,8 +188,20 @@ const (
 	DefaultCheckoutDepth                = 0
 	DefaultBitbucketBaseURL             = bitbucketcloud.BaseURL
 	DefaultDataDir                      = "~/.atlantis"
+	DefaultDBHost                       = "localhost"
+	DefaultDBPort                       = 5432
+	DefaultDBUser                       = "atlantis"
+	DefaultDBPassword                   = ""
+	DefaultDBName                       = "atlantis"
+	DefaultDBSSLMode                    = "disable"
+	DefaultDBMaxOpenConns               = 25
+	DefaultDBMaxIdleConns               = 5
+	DefaultDBConnMaxLifetime            = 900 // seconds (15 minutes)
 	DefaultEmojiReaction                = ""
 	DefaultExecutableName               = "atlantis"
+	DefaultExecutionMode                = "local"
+	DefaultGRPCPort                     = 0 // disabled by default
+	DefaultGRPCAgentToken               = ""
 	DefaultMarkdownTemplateOverridesDir = "~/.markdown_templates"
 	DefaultGHHostname                   = "github.com"
 	DefaultGiteaBaseURL                 = "https://gitea.com"
@@ -290,6 +315,26 @@ var stringFlags = map[string]stringFlag{
 		description:  "Path to directory to store Atlantis data.",
 		defaultValue: DefaultDataDir,
 	},
+	DBHostFlag: {
+		description:  "PostgreSQL database host. Required for distributed execution mode.",
+		defaultValue: DefaultDBHost,
+	},
+	DBUserFlag: {
+		description:  "PostgreSQL database user.",
+		defaultValue: DefaultDBUser,
+	},
+	DBPasswordFlag: {
+		description:  "PostgreSQL database password. Can also be specified via the ATLANTIS_DB_PASSWORD environment variable.",
+		defaultValue: DefaultDBPassword,
+	},
+	DBNameFlag: {
+		description:  "PostgreSQL database name.",
+		defaultValue: DefaultDBName,
+	},
+	DBSSLModeFlag: {
+		description:  "PostgreSQL SSL mode (disable, require, verify-ca, verify-full).",
+		defaultValue: DefaultDBSSLMode,
+	},
 	DisableAutoplanLabelFlag: {
 		description:  "Pull request label to disable atlantis auto planning feature only if present.",
 		defaultValue: "",
@@ -305,6 +350,17 @@ var stringFlags = map[string]stringFlag{
 	ExecutableName: {
 		description:  "Comment command executable name.",
 		defaultValue: DefaultExecutableName,
+	},
+	ExecutionModeFlag: {
+		description:  "Execution mode: 'local' (default, current behavior) or 'distributed' (master-agent architecture with PostgreSQL).",
+		defaultValue: DefaultExecutionMode,
+	},
+	DefaultExecutionModeFlag: {
+		description: "Default execution mode for projects when not specified in repo config. " +
+			"Valid values: 'local' or 'distributed'. " +
+			"If not set, inherits the value from --execution-mode. " +
+			"Projects can override this in their atlantis.yaml.",
+		defaultValue: "",
 	},
 	GHHostnameFlag: {
 		description:  "Hostname of your Github Enterprise installation. If using github.com, no need to set.",
@@ -367,6 +423,10 @@ var stringFlags = map[string]stringFlag{
 			" SECURITY WARNING: If not specified, Atlantis won't be able to validate that the incoming webhook call came from Gitea. " +
 			"This means that an attacker could spoof calls to Atlantis and cause it to perform malicious actions. " +
 			"Should be specified via the ATLANTIS_GITEA_WEBHOOK_SECRET environment variable.",
+	},
+	GRPCAgentTokenFlag: {
+		description:  "Token for authenticating agent controllers. Required when gRPC is enabled. Can also be specified via the ATLANTIS_GRPC_AGENT_TOKEN environment variable.",
+		defaultValue: DefaultGRPCAgentToken,
 	},
 	GitlabGroupAllowlistFlag: {
 		description: "Comma separated list of key-value pairs representing the GitLab groups and the operations that " +
@@ -662,6 +722,22 @@ var intFlags = map[string]intFlag{
 			" If merge base is further behind than this number of commits from any of branches heads, full fetch will be performed.",
 		defaultValue: DefaultCheckoutDepth,
 	},
+	DBPortFlag: {
+		description:  "PostgreSQL database port.",
+		defaultValue: DefaultDBPort,
+	},
+	DBMaxOpenConnsFlag: {
+		description:  "Maximum number of open connections to the database.",
+		defaultValue: DefaultDBMaxOpenConns,
+	},
+	DBMaxIdleConnsFlag: {
+		description:  "Maximum number of idle connections in the pool.",
+		defaultValue: DefaultDBMaxIdleConns,
+	},
+	DBConnMaxLifetimeFlag: {
+		description:  "Maximum lifetime of a connection in seconds.",
+		defaultValue: DefaultDBConnMaxLifetime,
+	},
 	MaxCommentsPerCommand: {
 		description:  "If non-zero, the maximum number of comments to split command output into before truncating.",
 		defaultValue: DefaultMaxCommentsPerCommand,
@@ -669,6 +745,10 @@ var intFlags = map[string]intFlag{
 	GiteaPageSizeFlag: {
 		description:  "Optional value that specifies the number of results per page to expect from Gitea.",
 		defaultValue: DefaultGiteaPageSize,
+	},
+	GRPCPortFlag: {
+		description:  "Port for gRPC server to listen on for agent connections. If 0, gRPC server is disabled.",
+		defaultValue: DefaultGRPCPort,
 	},
 	ParallelPoolSize: {
 		description:  "Max size of the wait group that runs parallel plans and applies (if enabled).",
@@ -917,6 +997,33 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	if c.DataDir == "" {
 		c.DataDir = DefaultDataDir
 	}
+	if c.DBHost == "" {
+		c.DBHost = DefaultDBHost
+	}
+	if c.DBPort == 0 {
+		c.DBPort = DefaultDBPort
+	}
+	if c.DBUser == "" {
+		c.DBUser = DefaultDBUser
+	}
+	if c.DBName == "" {
+		c.DBName = DefaultDBName
+	}
+	if c.DBSSLMode == "" {
+		c.DBSSLMode = DefaultDBSSLMode
+	}
+	if c.DBMaxOpenConns == 0 {
+		c.DBMaxOpenConns = DefaultDBMaxOpenConns
+	}
+	if c.DBMaxIdleConns == 0 {
+		c.DBMaxIdleConns = DefaultDBMaxIdleConns
+	}
+	if c.DBConnMaxLifetimeSeconds == 0 {
+		c.DBConnMaxLifetimeSeconds = DefaultDBConnMaxLifetime
+	}
+	if c.ExecutionMode == "" {
+		c.ExecutionMode = DefaultExecutionMode
+	}
 	if c.GithubHostname == "" {
 		c.GithubHostname = DefaultGHHostname
 	}
@@ -998,6 +1105,30 @@ func (s *ServerCmd) validate(userConfig server.UserConfig) error {
 	userConfig.LogLevel = strings.ToLower(userConfig.LogLevel)
 	if !isValidLogLevel(userConfig.LogLevel) {
 		return fmt.Errorf("invalid log level: must be one of %v", ValidLogLevels)
+	}
+
+	// Validate execution mode
+	if userConfig.ExecutionMode != "local" && userConfig.ExecutionMode != "distributed" {
+		return fmt.Errorf("invalid execution mode: must be 'local' or 'distributed', got %q", userConfig.ExecutionMode)
+	}
+
+	// Validate database configuration for distributed mode
+	if userConfig.ExecutionMode == "distributed" {
+		if userConfig.DBHost == "" {
+			return fmt.Errorf("--%s is required when execution mode is 'distributed'", DBHostFlag)
+		}
+		if userConfig.DBName == "" {
+			return fmt.Errorf("--%s is required when execution mode is 'distributed'", DBNameFlag)
+		}
+		if userConfig.DBUser == "" {
+			return fmt.Errorf("--%s is required when execution mode is 'distributed'", DBUserFlag)
+		}
+		if userConfig.GRPCPort == 0 {
+			return fmt.Errorf("--%s must be set when execution mode is 'distributed'", GRPCPortFlag)
+		}
+		if userConfig.GRPCAgentToken == "" {
+			return fmt.Errorf("--%s is required when gRPC is enabled", GRPCAgentTokenFlag)
+		}
 	}
 
 	if userConfig.DefaultTFDistribution != TFDistributionTerraform && userConfig.DefaultTFDistribution != TFDistributionOpenTofu {

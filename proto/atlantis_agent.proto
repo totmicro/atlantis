@@ -1,0 +1,154 @@
+syntax = "proto3";
+
+package atlantis.agent;
+
+option go_package = "github.com/runatlantis/atlantis/server/core/proto";
+
+// AgentService defines the gRPC service for master-agent communication
+service AgentService {
+  // StreamJobs is a bidirectional stream where agents send messages 
+  // (registration, heartbeats, results) and receive job assignments
+  rpc StreamJobs(stream AgentMessage) returns (stream JobAssignment);
+  
+  // ReportJobStatus allows agents to report status updates
+  rpc ReportJobStatus(JobStatusUpdate) returns (Ack);
+  
+  // GetJob retrieves job details by ID (alternative to streaming)
+  rpc GetJob(JobRequest) returns (JobDetails);
+}
+
+// AgentMessage represents messages sent from agent controller to master
+message AgentMessage {
+  oneof message {
+    Registration registration = 1;
+    Heartbeat heartbeat = 2;
+    JobResult job_result = 3;
+    CapacityUpdate capacity_update = 4;
+  }
+}
+
+// Registration message for agent controller initial connection
+message Registration {
+  string controller_id = 1;        // Unique ID for this controller
+  string token = 2;                 // Authentication token
+  string cluster_name = 3;          // Kubernetes cluster name
+  string namespace = 4;             // K8s namespace for agents
+  map<string, string> labels = 5;   // Labels for job routing
+  int32 capacity = 6;               // Max concurrent jobs
+  string version = 7;               // Atlantis version
+}
+
+// Heartbeat message to maintain connection and report health
+message Heartbeat {
+  string controller_id = 1;
+  int32 current_jobs = 2;           // Currently executing jobs
+  int32 available_capacity = 3;     // Available slots
+  int64 timestamp = 4;              // Unix timestamp
+}
+
+// JobResult message when job completes
+message JobResult {
+  string job_id = 1;
+  string status = 2;                // completed, failed, timeout
+  string output = 3;                // Human-readable output
+  bytes plan_data = 4;              // Terraform plan binary (for plan commands)
+  int32 exit_code = 5;              // Terraform exit code
+  string error_message = 6;         // Error details if failed
+  string agent_pod_name = 7;        // Pod that executed the job
+  int64 started_at = 8;             // Unix timestamp
+  int64 completed_at = 9;           // Unix timestamp
+}
+
+// CapacityUpdate for dynamic capacity changes
+message CapacityUpdate {
+  string controller_id = 1;
+  int32 new_capacity = 2;           // Updated capacity
+  string reason = 3;                // Why capacity changed (e.g., "draining")
+}
+
+// JobAssignment sent from master to agent controller
+message JobAssignment {
+  string job_id = 1;
+  string repo_full_name = 2;        // e.g., "owner/repo"
+  string repo_clone_url = 3;        // Full clone URL
+  int32 pull_num = 4;               // PR number
+  string pull_branch = 5;           // PR source branch
+  string pull_base_branch = 6;      // PR target branch
+  string pull_commit_sha = 7;       // PR HEAD commit
+  
+  string command = 8;               // plan, apply, unlock
+  string workspace = 9;             // Terraform workspace
+  string project_name = 10;         // Project name
+  string project_dir = 11;          // Relative path in repo
+  
+  bytes plan_data = 12;             // For apply: the plan to apply
+  
+  // VCS credentials for cloning
+  VCSCredentials vcs_credentials = 13;
+  
+  // Environment variables
+  map<string, string> env_vars = 14;
+  
+  // Custom workflow (if any)
+  WorkflowConfig workflow = 15;
+  
+  // Terraform version
+  string terraform_version = 16;
+  
+  // Additional metadata
+  map<string, string> metadata = 17;
+  
+  // Timeout in seconds
+  int32 timeout_seconds = 18;
+  
+  // Serialized ProjectContext for full execution environment reconstruction
+  bytes project_context_json = 19;
+}
+
+// VCS credentials for repository access
+message VCSCredentials {
+  string vcs_type = 1;              // github, gitlab, bitbucket, etc.
+  string username = 2;              // VCS username
+  string token = 3;                 // VCS token or password
+  string ssh_key = 4;               // SSH private key (if using SSH)
+}
+
+// Workflow configuration for custom workflows
+message WorkflowConfig {
+  repeated WorkflowStep plan_steps = 1;
+  repeated WorkflowStep apply_steps = 2;
+}
+
+// Individual workflow step
+message WorkflowStep {
+  string step_name = 1;             // init, plan, apply, run
+  string run_command = 2;           // For custom run steps
+  map<string, string> extra_args = 3;
+}
+
+// JobStatusUpdate for intermediate status reports
+message JobStatusUpdate {
+  string job_id = 1;
+  string status = 2;                // queued, assigned, running, completed, failed
+  string agent_pod_name = 3;        // Pod executing the job
+  string message = 4;               // Status message
+  int64 timestamp = 5;              // Unix timestamp
+}
+
+// JobRequest to fetch job details
+message JobRequest {
+  string job_id = 1;
+}
+
+// JobDetails response
+message JobDetails {
+  JobAssignment assignment = 1;
+  string status = 2;
+  int64 created_at = 3;
+}
+
+// Ack for acknowledgements
+message Ack {
+  bool success = 1;
+  string message = 2;
+}

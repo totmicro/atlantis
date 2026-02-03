@@ -270,12 +270,16 @@ func (a *APIController) apiPlan(request *APIRequest, ctx *command.Context) (*com
 
 	var projectResults []command.ProjectResult
 	for i, cmd := range cmds {
-		err = a.PreWorkflowHooksCommandRunner.RunPreHooks(ctx, cc[i])
-		if err != nil {
-			if a.FailOnPreWorkflowHookError {
-				return nil, err
-			}
-		}
+		// NOTE: Pre-workflow hooks are now run in ProjectCommandBuilder.buildAllCommandsByCfg
+		// immediately after cloning and before parsing atlantis.yaml.
+		// This allows hooks to generate config files that determine execution mode.
+		// Keeping this commented for now to avoid running hooks twice.
+		// err = a.PreWorkflowHooksCommandRunner.RunPreHooks(ctx, cc[i])
+		// if err != nil {
+		// 	if a.FailOnPreWorkflowHookError {
+		// 		return nil, err
+		// 	}
+		// }
 
 		res := events.RunOneProjectCmd(a.ProjectPlanCommandRunner.Plan, cmd)
 		projectResults = append(projectResults, res)
@@ -318,12 +322,14 @@ func (a *APIController) apiApply(request *APIRequest, ctx *command.Context) (*co
 
 	var projectResults []command.ProjectResult
 	for i, cmd := range cmds {
-		err = a.PreWorkflowHooksCommandRunner.RunPreHooks(ctx, cc[i])
-		if err != nil {
-			if a.FailOnPreWorkflowHookError {
-				return nil, err
-			}
-		}
+		// NOTE: Pre-workflow hooks are now run in ProjectCommandBuilder.buildAllCommandsByCfg
+		// immediately after cloning and before parsing atlantis.yaml.
+		// err = a.PreWorkflowHooksCommandRunner.RunPreHooks(ctx, cc[i])
+		// if err != nil {
+		// 	if a.FailOnPreWorkflowHookError {
+		// 		return nil, err
+		// 	}
+		// }
 
 		res := events.RunOneProjectCmd(a.ProjectApplyCommandRunner.Apply, cmd)
 		projectResults = append(projectResults, res)

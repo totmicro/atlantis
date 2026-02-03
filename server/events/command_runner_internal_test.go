@@ -205,7 +205,9 @@ func TestPlanUpdateApplyCommitStatus(t *testing.T) {
 					},
 				},
 			},
-			doNotCallUpdateApply: true,
+			expStatus:     models.PendingCommitStatus,
+			expNumSuccess: 1,
+			expNumTotal:   2,
 		},
 		"one plan, one apply, one plan success with no changes": {
 			cmd: command.Apply,
@@ -222,7 +224,9 @@ func TestPlanUpdateApplyCommitStatus(t *testing.T) {
 					},
 				},
 			},
-			doNotCallUpdateApply: true,
+			expStatus:     models.PendingCommitStatus,
+			expNumSuccess: 2,
+			expNumTotal:   3,
 		},
 		"one apply error, one apply, one plan success with no changes": {
 			cmd: command.Apply,

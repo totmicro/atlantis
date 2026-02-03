@@ -42,6 +42,17 @@ clean: ## Cleans compiled binary
 go-generate: ## Run go generate in all packages
 	./scripts/go-generate.sh
 
+.PHONY: proto-generate
+proto-generate: ## Generate Go code from protobuf definitions
+	@echo "Generating protobuf code..."
+	@command -v protoc >/dev/null 2>&1 || { echo "protoc is required but not installed. See https://grpc.io/docs/protoc-installation/"; exit 1; }
+	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	protoc --go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		proto/*.proto
+	@echo "Protobuf code generated successfully"
+
 .PHONY: regen-mocks
 regen-mocks: ## Delete and regenerate all mocks
 	find . -type f | grep mocks/mock_ | xargs rm

@@ -2,6 +2,13 @@
 {{ if (gt (len .Results) 1) -}}
 ### Apply Summary
 
-{{ len .Results }} projects, {{ .NumApplySuccesses }} successful, {{ .NumApplyFailures }} failed, {{ .NumApplyErrors }} errored
+{{ len .Results }} projects, {{ .NumApplySuccesses }} applied, {{ .NumApplyFailures }} failed, {{ .NumApplyErrors }} errored
+
+{{- $numPending := sub (len .Results) (add .NumApplySuccesses (add .NumApplyFailures .NumApplyErrors)) }}
+{{- if gt $numPending 0 }}
+
+ℹ️ **Note**: {{ $numPending }} project(s) queued for execution. In distributed mode, agents will execute these applies and post results when complete.
+{{- end }}
 {{ end -}}
 {{ end -}}
+

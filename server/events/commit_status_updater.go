@@ -88,6 +88,9 @@ func (d *DefaultCommitStatusUpdater) UpdateProject(ctx command.ProjectContext, c
 		projectID = fmt.Sprintf("%s/%s", ctx.RepoRelDir, ctx.Workspace)
 	}
 	src := fmt.Sprintf("%s/%s: %s", d.StatusName, cmdName.String(), projectID)
+
+	ctx.Log.Debug("UpdateProject called: cmdName=%s status=%s src=%s url=%s", cmdName.String(), status, src, url)
+
 	var descripWords string
 	switch status {
 	case models.PendingCommitStatus:
@@ -97,11 +100,23 @@ func (d *DefaultCommitStatusUpdater) UpdateProject(ctx command.ProjectContext, c
 	case models.SuccessCommitStatus:
 		if result != nil && result.PlanSuccess != nil {
 			descripWords = result.PlanSuccess.DiffSummary()
+			ctx.Log.Debug("using PlanSuccess.DiffSummary for description: %s", descripWords)
 		} else {
 			descripWords = genProjectStatusDescription(cmdName.String(), "succeeded.")
+			ctx.Log.Debug("using generic success description: %s", descripWords)
 		}
 	}
-	return d.Client.UpdateStatus(ctx.Log, ctx.BaseRepo, ctx.Pull, status, src, descripWords, url)
+
+	ctx.Log.Info("updating VCS status: repo=%s pull=%d status=%s src=%s description=%s",
+		ctx.BaseRepo.FullName, ctx.Pull.Num, status, src, descripWords)
+
+	err := d.Client.UpdateStatus(ctx.Log, ctx.BaseRepo, ctx.Pull, status, src, descripWords, url)
+	if err != nil {
+		ctx.Log.Err("failed to update VCS status: %v", err)
+	} else {
+		ctx.Log.Info("successfully updated VCS status")
+	}
+	return err
 }
 
 func genProjectStatusDescription(cmdName, description string) string {

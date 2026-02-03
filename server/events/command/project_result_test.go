@@ -138,6 +138,15 @@ func TestProjectResult_PlanStatus(t *testing.T) {
 		},
 		{
 			p: command.ProjectResult{
+				Command: command.Apply,
+				ProjectCommandOutput: command.ProjectCommandOutput{
+					ApplySuccess: "[ATLANTIS_QUEUED_JOB]\nqueued for execution",
+				},
+			},
+			expStatus: models.PlannedPlanStatus,
+		},
+		{
+			p: command.ProjectResult{
 				Command: command.PolicyCheck,
 				ProjectCommandOutput: command.ProjectCommandOutput{
 					PolicyCheckResults: &models.PolicyCheckResults{},

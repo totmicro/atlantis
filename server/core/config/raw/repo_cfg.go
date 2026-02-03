@@ -32,6 +32,8 @@ type RepoCfg struct {
 	AbortOnExecutionOrderFail *bool               `yaml:"abort_on_execution_order_fail,omitempty"`
 	RepoLocks                 *RepoLocks          `yaml:"repo_locks,omitempty"`
 	SilencePRComments         []string            `yaml:"silence_pr_comments,omitempty"`
+	ExecutionMode             *string             `yaml:"execution_mode,omitempty"`
+	AgentPoolSelector         *AgentPoolSelector  `yaml:"agent_pool_selector,omitempty"`
 }
 
 func (r RepoCfg) Validate() error {
@@ -86,6 +88,19 @@ func (r RepoCfg) ToValid() valid.RepoCfg {
 	if r.RepoLocks != nil {
 		repoLocks = r.RepoLocks.ToValid()
 	}
+
+	var executionMode *valid.ExecutionMode
+	if r.ExecutionMode != nil {
+		mode := valid.ExecutionMode(*r.ExecutionMode)
+		executionMode = &mode
+	}
+
+	var agentPoolSelector *valid.AgentPoolSelector
+	if r.AgentPoolSelector != nil {
+		selector := r.AgentPoolSelector.ToValid()
+		agentPoolSelector = &selector
+	}
+
 	return valid.RepoCfg{
 		Version:                   *r.Version,
 		Projects:                  validProjects,
@@ -101,5 +116,7 @@ func (r RepoCfg) ToValid() valid.RepoCfg {
 		AbortOnExecutionOrderFail: abortOnExecutionOrderFail,
 		RepoLocks:                 repoLocks,
 		SilencePRComments:         r.SilencePRComments,
+		ExecutionMode:             executionMode,
+		AgentPoolSelector:         agentPoolSelector,
 	}
 }

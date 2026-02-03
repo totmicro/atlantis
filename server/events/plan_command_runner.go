@@ -255,6 +255,16 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 
 	projectCmds, policyCheckCmds := p.partitionProjectCmds(ctx, projectCmds)
 
+	// Set per-project plan status to pending for all projects upfront (before execution/scheduling)
+	// This ensures all workspace checks appear immediately when atlantis plan runs
+	if statusUpdater, ok := p.commitStatusUpdater.(*DefaultCommitStatusUpdater); ok {
+		for _, projectCtx := range projectCmds {
+			if err := statusUpdater.UpdateProject(projectCtx, command.Plan, models.PendingCommitStatus, "", nil); err != nil {
+				ctx.Log.Warn("unable to update plan commit status to pending for %s: %s", projectCtx.RepoRelDir, err)
+			}
+		}
+	}
+
 	// if the plan is generic, new plans will be generated based on changes
 	// discard previous plans that might not be relevant anymore
 	if !cmd.IsForSpecificProject() {
@@ -341,20 +351,24 @@ func (p *PlanCommandRunner) updateCommitStatus(ctx *command.Context, pullStatus 
 		if numErrored > 0 {
 			status = models.FailedCommitStatus
 		} else if numSuccess < len(pullStatus.Projects) {
-			// When there are planned changes that haven't been applied yet:
-			// - GitLab: Set status to pending if PendingApplyStatus is enabled
-			//           This prevents MR merging until all applies complete
-			// - Other VCS: Leave status unchanged (existing behavior)
-			if ctx.Pull.BaseRepo.VCSHost.Type == models.Gitlab && p.PendingApplyStatus {
-				ctx.Log.Debug("Pending Apply Status is set. Pipeline status will be marked as pending since there are changes to apply")
-				status = models.PendingCommitStatus
-			} else {
-				if p.PendingApplyStatus {
-					// If a VCS uses this flag other than Gitlab, we log the warning to the user
-					ctx.Log.Warn("Flag --pending-apply-status is not yet supported by your VCS. Pipeline status will not be marked as pending")
+			// When there are planned changes that haven't been applied yet,
+			// set status to pending to prevent PR merging until applies complete.
+			// This is the default behavior for all VCS providers.
+			status = models.PendingCommitStatus
+
+			// Special case for GitLab: Only set pending status if PendingApplyStatus flag is enabled
+			// because GitLab's pipeline behavior works differently.
+			if ctx.Pull.BaseRepo.VCSHost.Type == models.Gitlab {
+				if !p.PendingApplyStatus {
+					ctx.Log.Debug("GitLab detected but --pending-apply-status not set. Apply status will remain successful.")
+					// For GitLab without flag, keep status as success (don't update)
+					return
 				}
-				// Otherwise, status remains SuccessCommitStatus (no update needed)
-				return
+				ctx.Log.Debug("Pending Apply Status is set. Pipeline status will be marked as pending since there are changes to apply")
+			} else {
+				if ctx.Log != nil {
+					ctx.Log.Debug("Setting apply status to pending since there are unapplied changes")
+				}
 			}
 		}
 	}

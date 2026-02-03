@@ -160,6 +160,16 @@ func (a *ApplyCommandRunner) Run(ctx *command.Context, cmd *CommentCommand) {
 		return
 	}
 
+	// Set per-project apply status to pending for all projects upfront (before execution/scheduling)
+	// This ensures all workspace checks appear immediately when atlantis apply runs
+	if statusUpdater, ok := a.commitStatusUpdater.(*DefaultCommitStatusUpdater); ok {
+		for _, projectCtx := range projectCmds {
+			if err := statusUpdater.UpdateProject(projectCtx, command.Apply, models.PendingCommitStatus, "", nil); err != nil {
+				ctx.Log.Warn("unable to update apply commit status to pending for %s: %s", projectCtx.RepoRelDir, err)
+			}
+		}
+	}
+
 	result := runProjectCmdsWithCancellationTracker(ctx, projectCmds, a.cancellationTracker, a.parallelPoolSize, a.isParallelEnabled(projectCmds), a.prjCmdRunner.Apply)
 	ctx.CommandHasErrors = result.HasErrors()
 

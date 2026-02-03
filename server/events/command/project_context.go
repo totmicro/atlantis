@@ -69,9 +69,9 @@ type ProjectContext struct {
 	// depends on other projects.
 	DependsOn []string
 	// Log is a logger that's been set up for this context.
-	Log logging.SimpleLogging
+	Log logging.SimpleLogging `json:"-"`
 	// Scope is the scope for reporting stats setup for this context
-	Scope tally.Scope
+	Scope tally.Scope `json:"-"`
 	// PullReqStatus holds state about the PR that requires additional computation outside models.PullRequest
 	PullReqStatus models.PullReqStatus
 	// CurrentProjectPlanStatus is the status of the current project prior to this command.
@@ -136,7 +136,14 @@ type ProjectContext struct {
 	SilencePRComments []string
 
 	// TeamAllowlistChecker is used to check authorization on a project-level
-	TeamAllowlistChecker TeamAllowlistChecker
+	TeamAllowlistChecker TeamAllowlistChecker `json:"-"`
+
+	// ExecutionMode determines where this project should be executed ("local" or "distributed")
+	ExecutionMode string
+	// AgentPoolSelector specifies label requirements for agent selection in distributed mode
+	AgentPoolSelector map[string]string
+	// PlanData stores the terraform plan file bytes for apply operations in distributed mode
+	PlanData []byte
 }
 
 // SetProjectScopeTags adds ProjectContext tags to a new returned scope.

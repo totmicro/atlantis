@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -47,7 +48,7 @@ func NewInstrumentedProjectCommandBuilder(
 	workingDir WorkingDir,
 	workingDirLocker WorkingDirLocker,
 	globalCfg valid.GlobalCfg,
-	pendingPlanFinder *DefaultPendingPlanFinder,
+	pendingPlanFinder PendingPlanFinder,
 	commentBuilder CommentBuilder,
 	skipCloneNoChanges bool,
 	EnableRegExpCmd bool,
@@ -107,7 +108,7 @@ func NewProjectCommandBuilder(
 	workingDir WorkingDir,
 	workingDirLocker WorkingDirLocker,
 	globalCfg valid.GlobalCfg,
-	pendingPlanFinder *DefaultPendingPlanFinder,
+	pendingPlanFinder PendingPlanFinder,
 	commentBuilder CommentBuilder,
 	skipCloneNoChanges bool,
 	EnableRegExpCmd bool,
@@ -223,7 +224,7 @@ type DefaultProjectCommandBuilder struct {
 	// The final parsed version of the server-side repo config.
 	GlobalCfg valid.GlobalCfg
 	// Finds unapplied plans.
-	PendingPlanFinder *DefaultPendingPlanFinder
+	PendingPlanFinder PendingPlanFinder
 	// Builds project command contexts for Atlantis commands.
 	ProjectCommandContextBuilder ProjectCommandContextBuilder
 	// User config option: Skip cloning the repo during autoplan if there are no changes to Terraform projects.
@@ -498,6 +499,14 @@ func (p *DefaultProjectCommandBuilder) buildAllCommandsByCfg(ctx *command.Contex
 	repoDir, err := p.WorkingDir.Clone(ctx.Log, ctx.HeadRepo, ctx.Pull, workspace)
 	if err != nil {
 		return nil, err
+	}
+
+	// Run pre-workflow hooks immediately after clone, before parsing repo config.
+	// This allows pre-workflow hooks to generate atlantis.yaml which determines execution mode.
+	if err := p.runPreWorkflowHooks(ctx, cmdName, repoDir, commentFlags); err != nil {
+		ctx.Log.Err("Error running pre-workflow hooks: %s", err)
+		// If pre-workflow hooks fail, we should stop processing
+		return nil, fmt.Errorf("pre-workflow hooks failed: %w", err)
 	}
 
 	if p.IncludeGitUntrackedFiles {
@@ -1004,4 +1013,88 @@ func (p *DefaultProjectCommandBuilder) validateWorkspaceAllowed(repoCfg *valid.R
 	}
 
 	return repoCfg.ValidateWorkspaceAllowed(repoRelDir, workspace)
+}
+
+// runPreWorkflowHooks executes pre-workflow hooks for the repository.
+// This is called immediately after cloning, before parsing atlantis.yaml,
+// so that hooks can generate the config file that determines execution mode.
+func (p *DefaultProjectCommandBuilder) runPreWorkflowHooks(ctx *command.Context, cmdName command.Name, repoDir string, commentFlags []string) error {
+	preWorkflowHooks := make([]*valid.WorkflowHook, 0)
+	for _, repo := range p.GlobalCfg.Repos {
+		if repo.IDMatches(ctx.Pull.BaseRepo.ID()) && len(repo.PreWorkflowHooks) > 0 {
+			preWorkflowHooks = append(preWorkflowHooks, repo.PreWorkflowHooks...)
+		}
+	}
+
+	if len(preWorkflowHooks) == 0 {
+		return nil
+	}
+
+	ctx.Log.Info("running pre-workflow hooks before parsing config...")
+
+	for i, hook := range preWorkflowHooks {
+		hookDesc := hook.StepDescription
+		if hookDesc == "" {
+			hookDesc = fmt.Sprintf("pre workflow hook #%d", i)
+		}
+
+		// Check if this hook should run for this command
+		if hook.Commands != "" && !strings.Contains(hook.Commands, cmdName.String()) {
+			ctx.Log.Debug("skipping hook '%s' - not configured for command '%s'", hookDesc, cmdName.String())
+			continue
+		}
+
+		ctx.Log.Info("running pre-workflow hook: %s", hookDesc)
+
+		shell := hook.Shell
+		if shell == "" {
+			shell = "sh"
+		}
+		shellArgs := hook.ShellArgs
+		if shellArgs == "" {
+			shellArgs = "-c"
+		}
+
+		// Run the hook command in the repo directory with environment variables
+		cmd := exec.Command(shell, shellArgs, hook.RunCommand)
+		cmd.Dir = repoDir
+
+		// Set environment variables for the hook (same as runtime.DefaultPreWorkflowHookRunner)
+		baseEnvVars := os.Environ()
+		customEnvVars := map[string]string{
+			"BASE_BRANCH_NAME": ctx.Pull.BaseBranch,
+			"BASE_REPO_NAME":   ctx.Pull.BaseRepo.Name,
+			"BASE_REPO_OWNER":  ctx.Pull.BaseRepo.Owner,
+			"DIR":              repoDir,
+			"HEAD_BRANCH_NAME": ctx.Pull.HeadBranch,
+			"HEAD_COMMIT":      ctx.Pull.HeadCommit,
+			"HEAD_REPO_NAME":   ctx.HeadRepo.Name,
+			"HEAD_REPO_OWNER":  ctx.HeadRepo.Owner,
+			"PULL_AUTHOR":      ctx.Pull.Author,
+			"PULL_NUM":         fmt.Sprintf("%d", ctx.Pull.Num),
+			"PULL_URL":         ctx.Pull.URL,
+			"USER_NAME":        ctx.User.Username,
+			"COMMAND_NAME":     cmdName.String(),
+		}
+
+		finalEnvVars := baseEnvVars
+		for key, val := range customEnvVars {
+			finalEnvVars = append(finalEnvVars, fmt.Sprintf("%s=%s", key, val))
+		}
+		cmd.Env = finalEnvVars
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			ctx.Log.Err("pre-workflow hook '%s' failed with exit status: %s", hookDesc, err)
+			ctx.Log.Err("hook command: %s %s %q", shell, shellArgs, hook.RunCommand)
+			ctx.Log.Err("hook output:\n%s", string(output))
+			return fmt.Errorf("pre-workflow hook '%s' failed: %w\nOutput: %s", hookDesc, err, string(output))
+		}
+		if len(output) > 0 {
+			ctx.Log.Info("pre-workflow hook '%s' output:\n%s", hookDesc, string(output))
+		}
+	}
+
+	ctx.Log.Info("pre-workflow hooks completed successfully")
+	return nil
 }

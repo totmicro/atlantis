@@ -1,5 +1,16 @@
 # Note: This file is only used for Atlantis local development
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: atlantis
+      POSTGRES_PASSWORD: atlantis
+      POSTGRES_DB: atlantis
+    volumes:
+      - postgres:/var/lib/postgresql/data
   ngrok:
     image: ngrok/ngrok:latest@sha256:d20e9631f5d5744353558b0d4bd5c5274bb2cc726c546a1a4873b59548024894
     ports:
@@ -22,6 +33,7 @@ services:
   atlantis:
     depends_on:
       - redis
+      - postgres
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -36,4 +48,6 @@ services:
 
 volumes:
   redis:
+    driver: local
+  postgres:
     driver: local

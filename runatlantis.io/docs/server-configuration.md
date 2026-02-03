@@ -423,6 +423,98 @@ will be lost and unapplied plans will be lost.
 Note that the atlantis user is restricted to `~/.atlantis`.
 If you set the `--data-dir` flag to a path outside of Atlantis its home directory, ensure that you grant the atlantis user the correct permissions.
 
+### `--db-conn-max-lifetime-seconds`
+
+```bash
+atlantis server --db-conn-max-lifetime-seconds=900
+# or
+ATLANTIS_DB_CONN_MAX_LIFETIME_SECONDS=900
+```
+
+Maximum lifetime of a database connection in seconds. Only used when `--execution-mode=distributed`. Defaults to `900` (15 minutes).
+
+### `--db-host`
+
+```bash
+atlantis server --db-host="localhost"
+# or
+ATLANTIS_DB_HOST="localhost"
+```
+
+PostgreSQL database host. Required when `--execution-mode=distributed`. Defaults to `localhost`.
+
+### `--db-max-idle-conns`
+
+```bash
+atlantis server --db-max-idle-conns=5
+# or
+ATLANTIS_DB_MAX_IDLE_CONNS=5
+```
+
+Maximum number of idle database connections in the pool. Only used when `--execution-mode=distributed`. Defaults to `5`.
+
+### `--db-max-open-conns`
+
+```bash
+atlantis server --db-max-open-conns=25
+# or
+ATLANTIS_DB_MAX_OPEN_CONNS=25
+```
+
+Maximum number of open database connections. Only used when `--execution-mode=distributed`. Defaults to `25`.
+
+### `--db-name`
+
+```bash
+atlantis server --db-name="atlantis"
+# or
+ATLANTIS_DB_NAME="atlantis"
+```
+
+PostgreSQL database name. Required when `--execution-mode=distributed`. Defaults to `atlantis`.
+
+### `--db-password`
+
+```bash
+atlantis server --db-password="password123"
+# or (recommended)
+ATLANTIS_DB_PASSWORD="password123"
+```
+
+PostgreSQL database password. Can also be specified via config file for security. Used when `--execution-mode=distributed`.
+
+### `--db-port`
+
+```bash
+atlantis server --db-port=5432
+# or
+ATLANTIS_DB_PORT=5432
+```
+
+PostgreSQL database port. Only used when `--execution-mode=distributed`. Defaults to `5432`.
+
+### `--db-sslmode`
+
+```bash
+atlantis server --db-sslmode="require"
+# or
+ATLANTIS_DB_SSLMODE="require"
+```
+
+PostgreSQL SSL mode. Options: `disable`, `require`, `verify-ca`, `verify-full`. Only used when `--execution-mode=distributed`. Defaults to `disable`.
+
+For production deployments, use `require` or higher.
+
+### `--db-user`
+
+```bash
+atlantis server --db-user="atlantis"
+# or
+ATLANTIS_DB_USER="atlantis"
+```
+
+PostgreSQL database user. Only used when `--execution-mode=distributed`. Defaults to `atlantis`.
+
 ### `--default-tf-distribution` <Badge text="v0.24.0+" type="info"/>
 
 ```bash
@@ -614,6 +706,26 @@ ATLANTIS_EXECUTABLE_NAME="atlantis"
 Comment command trigger executable name. Defaults to `atlantis`.
 
 This is useful when running multiple Atlantis servers against a single repository.
+
+### `--execution-mode`
+
+```bash
+atlantis server --execution-mode="local"
+# or
+ATLANTIS_EXECUTION_MODE="distributed"
+```
+
+Execution mode for Atlantis. Options:
+
+- `local` (default): Traditional single-server mode. All Terraform operations run on the Atlantis server.
+- `distributed`: Master-agent architecture. The server receives webhooks and assigns work to ephemeral agent controllers via gRPC.
+
+When using `distributed` mode, you must also configure:
+
+- Database connection (`--db-host`, `--db-name`, `--db-user`, `--db-password`)
+- gRPC server (`--grpc-port`, `--grpc-agent-token`)
+
+Defaults to `local`.
 
 ### `--fail-on-pre-workflow-hook-error` <Badge text="v0.27.0+" type="info"/>
 
@@ -927,6 +1039,35 @@ Secret used to validate GitLab webhooks.
 If not specified, Atlantis won't be able to validate that the incoming webhook call came from GitLab.
 This means that an attacker could spoof calls to Atlantis and cause it to perform malicious actions.
 :::
+
+### `--grpc-agent-token`
+
+```bash
+atlantis server --grpc-agent-token="your-secure-token"
+# or (recommended)
+ATLANTIS_GRPC_AGENT_TOKEN="your-secure-token"
+```
+
+Token for authenticating agent controllers. Required when gRPC is enabled (i.e., when `--grpc-port` is non-zero).
+
+Only used when `--execution-mode=distributed`.
+
+::: warning SECURITY WARNING
+Use a strong, randomly generated token. This token grants access to execute Terraform commands on behalf of Atlantis.
+Store this securely (e.g., in Kubernetes Secrets) and never commit it to version control.
+:::
+
+### `--grpc-port`
+
+```bash
+atlantis server --grpc-port=9090
+# or
+ATLANTIS_GRPC_PORT=9090
+```
+
+Port for gRPC server to listen on for agent connections. If `0`, gRPC server is disabled. Defaults to `0`.
+
+Required when `--execution-mode=distributed`.
 
 ### `--help` <Badge text="v0.1.3+" type="info"/>
 

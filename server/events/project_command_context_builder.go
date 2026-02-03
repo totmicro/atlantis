@@ -275,7 +275,7 @@ func newProjectCommandContext(ctx *command.Context,
 		}
 	}
 
-	return command.ProjectContext{
+	projectCmdContext := command.ProjectContext{
 		CommandName:                cmd,
 		SubCommand:                 subCommand,
 		ApplyCmd:                   applyCmd,
@@ -320,7 +320,16 @@ func newProjectCommandContext(ctx *command.Context,
 		AbortOnExecutionOrderFail:  abortOnExecutionOrderFail,
 		SilencePRComments:          projCfg.SilencePRComments,
 		TeamAllowlistChecker:       teamAllowlistChecker,
+		ExecutionMode:              getExecutionModeString(projCfg.ExecutionMode),
+		AgentPoolSelector:          getAgentPoolSelectorLabels(projCfg.AgentPoolSelector),
 	}
+
+	// Debug logging for execution mode configuration
+	ctx.Log.Info("project context created: project=%s dir=%s workspace=%s executionMode=%q agentLabels=%v",
+		projCfg.Name, projCfg.RepoRelDir, projCfg.Workspace,
+		projectCmdContext.ExecutionMode, projectCmdContext.AgentPoolSelector)
+
+	return projectCmdContext
 }
 
 func escapeArgs(args []string) []string {
@@ -333,4 +342,20 @@ func escapeArgs(args []string) []string {
 		escaped = append(escaped, escapedArg.String())
 	}
 	return escaped
+}
+
+// getExecutionModeString converts ExecutionMode pointer to string
+func getExecutionModeString(mode *valid.ExecutionMode) string {
+	if mode == nil {
+		return string(valid.LocalExecutionMode) // Default to local
+	}
+	return string(*mode)
+}
+
+// getAgentPoolSelectorLabels extracts labels from AgentPoolSelector
+func getAgentPoolSelectorLabels(selector *valid.AgentPoolSelector) map[string]string {
+	if selector == nil {
+		return nil
+	}
+	return selector.Labels
 }

@@ -161,11 +161,12 @@ func (g GlobalCfg) ToValid(defaultCfg valid.GlobalCfg) valid.GlobalCfg {
 	repos = append(defaultCfg.Repos, repos...)
 
 	return valid.GlobalCfg{
-		Repos:      repos,
-		Workflows:  workflows,
-		PolicySets: g.PolicySets.ToValid(),
-		Metrics:    g.Metrics.ToValid(),
-		TeamAuthz:  g.TeamAuthz.ToValid(),
+		Repos:                repos,
+		Workflows:            workflows,
+		PolicySets:           g.PolicySets.ToValid(),
+		Metrics:              g.Metrics.ToValid(),
+		TeamAuthz:            g.TeamAuthz.ToValid(),
+		DefaultExecutionMode: defaultCfg.DefaultExecutionMode,
 	}
 }
 

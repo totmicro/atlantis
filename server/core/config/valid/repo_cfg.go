@@ -34,6 +34,10 @@ type RepoCfg struct {
 	AllowedRegexpPrefixes     []string
 	AbortOnExecutionOrderFail bool
 	SilencePRComments         []string
+	// ExecutionMode defines the default execution mode for all projects
+	ExecutionMode *ExecutionMode
+	// AgentPoolSelector defines the default agent pool selector for all projects
+	AgentPoolSelector *AgentPoolSelector
 }
 
 func (r RepoCfg) FindProjectsByDirWorkspace(repoRelDir string, workspace string) []Project {
@@ -194,6 +198,8 @@ type Project struct {
 	PolicyCheck               *bool
 	CustomPolicyCheck         *bool
 	SilencePRComments         []string
+	ExecutionMode             *ExecutionMode
+	AgentPoolSelector         *AgentPoolSelector
 }
 
 // GetName returns the name of the project or an empty string if there is no
@@ -235,24 +241,24 @@ func (s CommandShell) String() string {
 }
 
 type Step struct {
-	StepName  string
-	ExtraArgs []string
+	StepName  string   `json:"step_name"`
+	ExtraArgs []string `json:"extra_args,omitempty"`
 	// RunCommand is either a custom run step or the command to run
 	// during an env step to populate the environment variable dynamically.
-	RunCommand string
+	RunCommand string `json:"run_command,omitempty"`
 	// Output includes the options for post-processing a RunCommand output
 	// these will be executed in the received order
-	Output []PostProcessRunOutputOption
+	Output []PostProcessRunOutputOption `json:"output,omitempty"`
 	// EnvVarName is the name of the
 	// environment variable that should be set by this step.
-	EnvVarName string
+	EnvVarName string `json:"env_var_name,omitempty"`
 	// EnvVarValue is the value to set EnvVarName to.
-	EnvVarValue string
+	EnvVarValue string `json:"env_var_value,omitempty"`
 	// The Shell to use for RunCommand execution.
-	RunShell *CommandShell
+	RunShell *CommandShell `json:"run_shell,omitempty"`
 	// FilterRegex is a list of regexes for post-processing a RunCommand output
 	// these will be executed in the received order
-	FilterRegexes []*regexp.Regexp
+	FilterRegexes []*regexp.Regexp `json:"filter_regexes,omitempty"`
 }
 
 type Workflow struct {

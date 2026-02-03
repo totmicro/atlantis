@@ -64,7 +64,13 @@ func (a *ApplyStepRunner) Run(ctx command.ProjectContext, extraArgs []string, pa
 		// NOTE: we need to quote the plan path because Bitbucket Server can
 		// have spaces in its repo owner names which is part of the path.
 		args := append(append(append([]string{"apply", "-input=false"}, extraArgs...), ctx.EscapedCommentArgs...), fmt.Sprintf("%q", planPath))
+		ctx.Log.Info("running terraform apply with plan file: %s", planPath)
+		ctx.Log.Info("terraform command: terraform %s", strings.Join(args, " "))
 		out, err = a.TerraformExecutor.RunCommandWithVersion(ctx, path, args, envs, tfDistribution, tfVersion, ctx.Workspace)
+		if err != nil {
+			ctx.Log.Err("terraform apply failed: %v", err)
+			ctx.Log.Err("terraform apply output: %s", out)
+		}
 	}
 
 	// If the apply was successful, delete the plan.

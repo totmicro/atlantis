@@ -104,6 +104,29 @@ type UserConfig struct {
 	RepoConfigJSON                  string `mapstructure:"repo-config-json"`
 	RepoAllowlist                   string `mapstructure:"repo-allowlist"`
 
+	// PostgreSQL configuration for distributed mode
+	DBType                   string `mapstructure:"db-type" flag:"false"` // "memory" (default) or "postgres" - derived from ExecutionMode
+	DBHost                   string `mapstructure:"db-host"`
+	DBPort                   int    `mapstructure:"db-port"`
+	DBUser                   string `mapstructure:"db-user"`
+	DBUserFile               string `mapstructure:"db-user-file" flag:"false"` // alternative to DBUser
+	DBPassword               string `mapstructure:"db-password"`
+	DBPasswordFile           string `mapstructure:"db-password-file" flag:"false"` // alternative to DBPassword
+	DBName                   string `mapstructure:"db-name"`
+	DBSSLMode                string `mapstructure:"db-sslmode"`
+	DBMaxOpenConns           int    `mapstructure:"db-max-open-conns"`
+	DBMaxIdleConns           int    `mapstructure:"db-max-idle-conns"`
+	DBConnMaxLifetimeSeconds int    `mapstructure:"db-conn-max-lifetime-seconds"`
+
+	// gRPC configuration for agent communication
+	GRPCPort           int    `mapstructure:"grpc-port"`
+	GRPCAgentToken     string `mapstructure:"grpc-agent-token"`
+	GRPCAgentTokenFile string `mapstructure:"grpc-agent-token-file" flag:"false"` // alternative to GRPCAgentToken
+
+	// Execution mode configuration
+	ExecutionMode        string `mapstructure:"execution-mode"`         // "local" (default) or "distributed"
+	DefaultExecutionMode string `mapstructure:"default-execution-mode"` // Default execution mode for projects when not specified in repo config
+
 	// SilenceNoProjects is whether Atlantis should respond to a PR if no projects are found.
 	SilenceNoProjects   bool `mapstructure:"silence-no-projects"`
 	SilenceForkPRErrors bool `mapstructure:"silence-fork-pr-errors"`

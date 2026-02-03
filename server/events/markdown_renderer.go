@@ -102,6 +102,7 @@ type planResultData struct {
 	NumPlansWithChanges   int
 	NumPlansWithNoChanges int
 	NumPlanFailures       int
+	NumQueuedJobs         int
 }
 
 type applyResultData struct {
@@ -222,6 +223,7 @@ func (m *MarkdownRenderer) renderProjectResults(ctx *command.Context, results []
 	numVersionSuccesses := 0
 	numPlansWithChanges := 0
 	numPlansWithNoChanges := 0
+	numQueuedJobs := 0
 	numApplySuccesses := 0
 	numApplyFailures := 0
 	numApplyErrors := 0
@@ -251,11 +253,18 @@ func (m *MarkdownRenderer) renderProjectResults(ctx *command.Context, results []
 			} else {
 				resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("planSuccessUnwrapped"), data)
 			}
-			resultData.NoChanges = result.PlanSuccess.NoChanges()
-			if result.PlanSuccess.NoChanges() {
-				numPlansWithNoChanges++
+			// Check if this is a queued job (distributed mode)
+			isQueuedJob := strings.Contains(result.PlanSuccess.TerraformOutput, "Plan job queued")
+			if isQueuedJob {
+				numQueuedJobs++
 			} else {
-				numPlansWithChanges++
+				// Only count changes/no-changes for completed plans
+				resultData.NoChanges = result.PlanSuccess.NoChanges()
+				if result.PlanSuccess.NoChanges() {
+					numPlansWithNoChanges++
+				} else {
+					numPlansWithChanges++
+				}
 			}
 			numPlanSuccesses++
 		} else if result.PolicyCheckResults != nil && common.Command == policyCheckCommandTitle {
@@ -293,13 +302,20 @@ func (m *MarkdownRenderer) renderProjectResults(ctx *command.Context, results []
 				numPolicyApprovalSuccesses++
 			}
 		} else if result.ApplySuccess != "" {
+			// Strip the queued job marker if present
 			output := strings.TrimSpace(result.ApplySuccess)
-			if m.shouldUseWrappedTmpl(vcsHost, result.ApplySuccess) {
+			isQueuedJob := strings.HasPrefix(output, "[ATLANTIS_QUEUED_JOB]\n")
+			output = strings.TrimPrefix(output, "[ATLANTIS_QUEUED_JOB]\n")
+
+			if m.shouldUseWrappedTmpl(vcsHost, output) {
 				resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("applyWrappedSuccess"), struct{ Output string }{output})
 			} else {
 				resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("applyUnwrappedSuccess"), struct{ Output string }{output})
 			}
-			numApplySuccesses++
+			// Only count as successfully applied if not a queued job
+			if !isQueuedJob {
+				numApplySuccesses++
+			}
 		} else if result.VersionSuccess != "" {
 			output := strings.TrimSpace(result.VersionSuccess)
 			if m.shouldUseWrappedTmpl(vcsHost, output) {
@@ -405,7 +421,7 @@ func (m *MarkdownRenderer) renderProjectResults(ctx *command.Context, results []
 	switch common.Command {
 	case planCommandTitle:
 		numPlanFailures := len(results) - numPlanSuccesses
-		return m.renderTemplateTrimSpace(tmpl, planResultData{resultsTmplData, common, numPlansWithChanges, numPlansWithNoChanges, numPlanFailures})
+		return m.renderTemplateTrimSpace(tmpl, planResultData{resultsTmplData, common, numPlansWithChanges, numPlansWithNoChanges, numPlanFailures, numQueuedJobs})
 	case applyCommandTitle:
 		return m.renderTemplateTrimSpace(tmpl, applyResultData{resultsTmplData, common, numApplySuccesses, numApplyFailures, numApplyErrors})
 	}

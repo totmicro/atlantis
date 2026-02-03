@@ -25,25 +25,27 @@ const (
 )
 
 type Project struct {
-	Name                      *string    `yaml:"name,omitempty"`
-	Branch                    *string    `yaml:"branch,omitempty"`
-	Dir                       *string    `yaml:"dir,omitempty"`
-	Workspace                 *string    `yaml:"workspace,omitempty"`
-	Workflow                  *string    `yaml:"workflow,omitempty"`
-	TerraformDistribution     *string    `yaml:"terraform_distribution,omitempty"`
-	TerraformVersion          *string    `yaml:"terraform_version,omitempty"`
-	Autoplan                  *Autoplan  `yaml:"autoplan,omitempty"`
-	PlanRequirements          []string   `yaml:"plan_requirements,omitempty"`
-	ApplyRequirements         []string   `yaml:"apply_requirements,omitempty"`
-	ImportRequirements        []string   `yaml:"import_requirements,omitempty"`
-	DependsOn                 []string   `yaml:"depends_on,omitempty"`
-	DeleteSourceBranchOnMerge *bool      `yaml:"delete_source_branch_on_merge,omitempty"`
-	RepoLocking               *bool      `yaml:"repo_locking,omitempty"`
-	RepoLocks                 *RepoLocks `yaml:"repo_locks,omitempty"`
-	ExecutionOrderGroup       *int       `yaml:"execution_order_group,omitempty"`
-	PolicyCheck               *bool      `yaml:"policy_check,omitempty"`
-	CustomPolicyCheck         *bool      `yaml:"custom_policy_check,omitempty"`
-	SilencePRComments         []string   `yaml:"silence_pr_comments,omitempty"`
+	Name                      *string            `yaml:"name,omitempty"`
+	Branch                    *string            `yaml:"branch,omitempty"`
+	Dir                       *string            `yaml:"dir,omitempty"`
+	Workspace                 *string            `yaml:"workspace,omitempty"`
+	Workflow                  *string            `yaml:"workflow,omitempty"`
+	TerraformDistribution     *string            `yaml:"terraform_distribution,omitempty"`
+	TerraformVersion          *string            `yaml:"terraform_version,omitempty"`
+	Autoplan                  *Autoplan          `yaml:"autoplan,omitempty"`
+	PlanRequirements          []string           `yaml:"plan_requirements,omitempty"`
+	ApplyRequirements         []string           `yaml:"apply_requirements,omitempty"`
+	ImportRequirements        []string           `yaml:"import_requirements,omitempty"`
+	DependsOn                 []string           `yaml:"depends_on,omitempty"`
+	DeleteSourceBranchOnMerge *bool              `yaml:"delete_source_branch_on_merge,omitempty"`
+	RepoLocking               *bool              `yaml:"repo_locking,omitempty"`
+	RepoLocks                 *RepoLocks         `yaml:"repo_locks,omitempty"`
+	ExecutionOrderGroup       *int               `yaml:"execution_order_group,omitempty"`
+	PolicyCheck               *bool              `yaml:"policy_check,omitempty"`
+	CustomPolicyCheck         *bool              `yaml:"custom_policy_check,omitempty"`
+	SilencePRComments         []string           `yaml:"silence_pr_comments,omitempty"`
+	ExecutionMode             *string            `yaml:"execution_mode,omitempty"`
+	AgentPoolSelector         *AgentPoolSelector `yaml:"agent_pool_selector,omitempty"`
 }
 
 func (p Project) Validate() error {
@@ -107,6 +109,18 @@ func (p Project) Validate() error {
 		return errors.New("name: cannot be used with glob patterns in 'dir'; glob patterns expand to multiple projects which cannot share the same name")
 	}
 
+	validExecutionMode := func(value any) error {
+		strPtr := value.(*string)
+		if strPtr == nil {
+			return nil
+		}
+		mode := valid.ExecutionMode(*strPtr)
+		if !mode.IsValid() {
+			return fmt.Errorf("must be 'local' or 'distributed', got %q", *strPtr)
+		}
+		return nil
+	}
+
 	return validation.ValidateStruct(&p,
 		validation.Field(&p.Dir, validation.Required, validation.By(validDir)),
 		validation.Field(&p.PlanRequirements, validation.By(validPlanReq)),
@@ -117,6 +131,8 @@ func (p Project) Validate() error {
 		validation.Field(&p.DependsOn, validation.By(DependsOn)),
 		validation.Field(&p.Name, validation.By(validName)),
 		validation.Field(&p.Branch, validation.By(branchValid)),
+		validation.Field(&p.ExecutionMode, validation.By(validExecutionMode)),
+		validation.Field(&p.AgentPoolSelector),
 	)
 }
 
@@ -189,6 +205,18 @@ func (p Project) ToValid() valid.Project {
 
 	if p.SilencePRComments != nil {
 		v.SilencePRComments = p.SilencePRComments
+	}
+
+	// Parse execution mode
+	if p.ExecutionMode != nil {
+		mode := valid.ExecutionMode(*p.ExecutionMode)
+		v.ExecutionMode = &mode
+	}
+
+	// Parse agent pool selector
+	if p.AgentPoolSelector != nil {
+		selector := p.AgentPoolSelector.ToValid()
+		v.AgentPoolSelector = &selector
 	}
 
 	return v
