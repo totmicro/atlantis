@@ -64,14 +64,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 -- Indexes for query performance
-CREATE INDEX idx_jobs_status_created ON jobs(status, created_at);
-CREATE INDEX idx_jobs_repo_pull ON jobs(repo_full_name, pull_num);
-CREATE INDEX idx_jobs_agent_controller ON jobs(agent_controller_id) WHERE agent_controller_id IS NOT NULL;
-CREATE INDEX idx_jobs_labels ON jobs USING GIN(labels) WHERE labels IS NOT NULL;
-CREATE INDEX idx_jobs_completed_at ON jobs(completed_at) WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_repo_pull ON jobs(repo_full_name, pull_num);
+CREATE INDEX IF NOT EXISTS idx_jobs_agent_controller ON jobs(agent_controller_id) WHERE agent_controller_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_labels ON jobs USING GIN(labels) WHERE labels IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_completed_at ON jobs(completed_at) WHERE completed_at IS NOT NULL;
 
 -- Partial index for active jobs
-CREATE INDEX idx_jobs_active ON jobs(status, created_at) 
+CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(status, created_at) 
     WHERE status IN ('queued', 'assigned', 'running');
 
 -- Comments for documentation

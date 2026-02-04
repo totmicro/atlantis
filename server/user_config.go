@@ -127,6 +127,10 @@ type UserConfig struct {
 	ExecutionMode        string `mapstructure:"execution-mode"`         // "local" (default) or "distributed"
 	DefaultExecutionMode string `mapstructure:"default-execution-mode"` // Default execution mode for projects when not specified in repo config
 
+	// Job assignment retry configuration (distributed mode)
+	JobNoAgentMaxRetries    int `mapstructure:"job-no-agent-max-retries"`    // Max retries before canceling job when no matching agents available
+	JobNoAgentRetryInterval int `mapstructure:"job-no-agent-retry-interval"` // Interval in seconds between retry attempts
+
 	// SilenceNoProjects is whether Atlantis should respond to a PR if no projects are found.
 	SilenceNoProjects   bool `mapstructure:"silence-no-projects"`
 	SilenceForkPRErrors bool `mapstructure:"silence-fork-pr-errors"`

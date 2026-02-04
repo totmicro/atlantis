@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS job_audit_log (
 );
 
 -- Indexes
-CREATE INDEX idx_job_audit_log_job ON job_audit_log(job_id, changed_at DESC);
-CREATE INDEX idx_job_audit_log_time ON job_audit_log(changed_at DESC);
-CREATE INDEX idx_job_audit_log_status ON job_audit_log(new_status, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_audit_log_job ON job_audit_log(job_id, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_audit_log_time ON job_audit_log(changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_audit_log_status ON job_audit_log(new_status, changed_at DESC);
 
 -- Agent labels table (many-to-many relationship)
 CREATE TABLE IF NOT EXISTS agent_labels (
@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS agent_labels (
 );
 
 -- Indexes for fast label-based agent lookup
-CREATE INDEX idx_agent_labels_key_value ON agent_labels(label_key, label_value);
-CREATE INDEX idx_agent_labels_agent ON agent_labels(agent_controller_id);
+CREATE INDEX IF NOT EXISTS idx_agent_labels_key_value ON agent_labels(label_key, label_value);
+CREATE INDEX IF NOT EXISTS idx_agent_labels_agent ON agent_labels(agent_controller_id);
 
 -- Comments
 COMMENT ON TABLE job_audit_log IS 'Audit trail for all job state transitions';

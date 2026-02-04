@@ -91,12 +91,15 @@ func (s *DefaultScheduler) AssignNextJob() (*jobs.Job, *db.AgentController, erro
 
 	for _, dbJob := range queuedJobs {
 		assigned := false
+		s.logger.Info("checking job %s with labels %v", dbJob.ID, dbJob.Labels)
 		for _, agent := range agents {
+			s.logger.Info("checking agent %s with labels %v", agent.ID, agent.Labels)
 			// Check if agent labels match job requirements
 			if s.router.agentMatchesDBJob(agent, dbJob) {
 				// Assign job to agent in database
 				if err := s.jobStore.AssignToAgent(ctx, dbJob.ID, agent.ID); err != nil {
-					s.logger.Warn("failed to assign job %s to agent %s: %v", dbJob.ID, agent.ID, err)
+					// Expected during reconnection - job may already be assigned or completed
+					s.logger.Info("could not assign job %s to agent %s: %v", dbJob.ID, agent.ID, err)
 					continue
 				}
 
@@ -112,7 +115,8 @@ func (s *DefaultScheduler) AssignNextJob() (*jobs.Job, *db.AgentController, erro
 						s.logger.Warn("failed to reload job after assignment: %v", err)
 					} else {
 						if err := s.jobNotifier.AssignJobToAgent(agent.ID, assignedJob); err != nil {
-							s.logger.Warn("failed to notify agent %s about job %s: %v", agent.ID, dbJob.ID, err)
+							// Expected during reconnection - agent may have disconnected
+							s.logger.Info("could not notify agent %s about job %s: %v", agent.ID, dbJob.ID, err)
 						} else {
 							s.logger.Info("notified agent %s about job %s", agent.ID, dbJob.ID)
 						}
@@ -134,7 +138,11 @@ func (s *DefaultScheduler) AssignNextJob() (*jobs.Job, *db.AgentController, erro
 			}
 		}
 		if !assigned {
-			s.logger.Debug("no suitable agent found for job %s", dbJob.ID)
+			s.logger.Info("no suitable agent found for job %s with labels %v, incrementing attempt count", dbJob.ID, dbJob.Labels)
+			// Increment attempt count for jobs that can't be assigned
+			if err := s.jobStore.IncrementAttemptCount(ctx, dbJob.ID); err != nil {
+				s.logger.Warn("failed to increment attempt count for job %s: %v", dbJob.ID, err)
+			}
 		}
 	}
 

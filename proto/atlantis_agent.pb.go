@@ -1084,6 +1084,96 @@ func (x *Ack) GetMessage() string {
 	return ""
 }
 
+// SyncJobsRequest to query for assigned jobs
+type SyncJobsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ControllerId  string                 `protobuf:"bytes,1,opt,name=controller_id,json=controllerId,proto3" json:"controller_id,omitempty"` // Agent controller ID
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncJobsRequest) Reset() {
+	*x = SyncJobsRequest{}
+	mi := &file_proto_atlantis_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncJobsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncJobsRequest) ProtoMessage() {}
+
+func (x *SyncJobsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_atlantis_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncJobsRequest.ProtoReflect.Descriptor instead.
+func (*SyncJobsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_atlantis_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SyncJobsRequest) GetControllerId() string {
+	if x != nil {
+		return x.ControllerId
+	}
+	return ""
+}
+
+// SyncJobsResponse with list of assigned jobs
+type SyncJobsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jobs          []*JobAssignment       `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"` // Jobs assigned to this agent
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncJobsResponse) Reset() {
+	*x = SyncJobsResponse{}
+	mi := &file_proto_atlantis_agent_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncJobsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncJobsResponse) ProtoMessage() {}
+
+func (x *SyncJobsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_atlantis_agent_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncJobsResponse.ProtoReflect.Descriptor instead.
+func (*SyncJobsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_atlantis_agent_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SyncJobsResponse) GetJobs() []*JobAssignment {
+	if x != nil {
+		return x.Jobs
+	}
+	return nil
+}
+
 var File_proto_atlantis_agent_proto protoreflect.FileDescriptor
 
 const file_proto_atlantis_agent_proto_rawDesc = "" +
@@ -1194,12 +1284,17 @@ const file_proto_atlantis_agent_proto_rawDesc = "" +
 	"created_at\x18\x03 \x01(\x03R\tcreatedAt\"9\n" +
 	"\x03Ack\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xe8\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"6\n" +
+	"\x0fSyncJobsRequest\x12#\n" +
+	"\rcontroller_id\x18\x01 \x01(\tR\fcontrollerId\"E\n" +
+	"\x10SyncJobsResponse\x121\n" +
+	"\x04jobs\x18\x01 \x03(\v2\x1d.atlantis.agent.JobAssignmentR\x04jobs2\xbf\x02\n" +
 	"\fAgentService\x12M\n" +
 	"\n" +
 	"StreamJobs\x12\x1c.atlantis.agent.AgentMessage\x1a\x1d.atlantis.agent.JobAssignment(\x010\x01\x12G\n" +
 	"\x0fReportJobStatus\x12\x1f.atlantis.agent.JobStatusUpdate\x1a\x13.atlantis.agent.Ack\x12@\n" +
-	"\x06GetJob\x12\x1a.atlantis.agent.JobRequest\x1a\x1a.atlantis.agent.JobDetailsB3Z1github.com/runatlantis/atlantis/server/core/protob\x06proto3"
+	"\x06GetJob\x12\x1a.atlantis.agent.JobRequest\x1a\x1a.atlantis.agent.JobDetails\x12U\n" +
+	"\x10SyncAssignedJobs\x12\x1f.atlantis.agent.SyncJobsRequest\x1a .atlantis.agent.SyncJobsResponseB3Z1github.com/runatlantis/atlantis/server/core/protob\x06proto3"
 
 var (
 	file_proto_atlantis_agent_proto_rawDescOnce sync.Once
@@ -1213,51 +1308,56 @@ func file_proto_atlantis_agent_proto_rawDescGZIP() []byte {
 	return file_proto_atlantis_agent_proto_rawDescData
 }
 
-var file_proto_atlantis_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_proto_atlantis_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_proto_atlantis_agent_proto_goTypes = []any{
-	(*AgentMessage)(nil),    // 0: atlantis.agent.AgentMessage
-	(*Registration)(nil),    // 1: atlantis.agent.Registration
-	(*Heartbeat)(nil),       // 2: atlantis.agent.Heartbeat
-	(*JobResult)(nil),       // 3: atlantis.agent.JobResult
-	(*CapacityUpdate)(nil),  // 4: atlantis.agent.CapacityUpdate
-	(*JobAssignment)(nil),   // 5: atlantis.agent.JobAssignment
-	(*VCSCredentials)(nil),  // 6: atlantis.agent.VCSCredentials
-	(*WorkflowConfig)(nil),  // 7: atlantis.agent.WorkflowConfig
-	(*WorkflowStep)(nil),    // 8: atlantis.agent.WorkflowStep
-	(*JobStatusUpdate)(nil), // 9: atlantis.agent.JobStatusUpdate
-	(*JobRequest)(nil),      // 10: atlantis.agent.JobRequest
-	(*JobDetails)(nil),      // 11: atlantis.agent.JobDetails
-	(*Ack)(nil),             // 12: atlantis.agent.Ack
-	nil,                     // 13: atlantis.agent.Registration.LabelsEntry
-	nil,                     // 14: atlantis.agent.JobAssignment.EnvVarsEntry
-	nil,                     // 15: atlantis.agent.JobAssignment.MetadataEntry
-	nil,                     // 16: atlantis.agent.WorkflowStep.ExtraArgsEntry
+	(*AgentMessage)(nil),     // 0: atlantis.agent.AgentMessage
+	(*Registration)(nil),     // 1: atlantis.agent.Registration
+	(*Heartbeat)(nil),        // 2: atlantis.agent.Heartbeat
+	(*JobResult)(nil),        // 3: atlantis.agent.JobResult
+	(*CapacityUpdate)(nil),   // 4: atlantis.agent.CapacityUpdate
+	(*JobAssignment)(nil),    // 5: atlantis.agent.JobAssignment
+	(*VCSCredentials)(nil),   // 6: atlantis.agent.VCSCredentials
+	(*WorkflowConfig)(nil),   // 7: atlantis.agent.WorkflowConfig
+	(*WorkflowStep)(nil),     // 8: atlantis.agent.WorkflowStep
+	(*JobStatusUpdate)(nil),  // 9: atlantis.agent.JobStatusUpdate
+	(*JobRequest)(nil),       // 10: atlantis.agent.JobRequest
+	(*JobDetails)(nil),       // 11: atlantis.agent.JobDetails
+	(*Ack)(nil),              // 12: atlantis.agent.Ack
+	(*SyncJobsRequest)(nil),  // 13: atlantis.agent.SyncJobsRequest
+	(*SyncJobsResponse)(nil), // 14: atlantis.agent.SyncJobsResponse
+	nil,                      // 15: atlantis.agent.Registration.LabelsEntry
+	nil,                      // 16: atlantis.agent.JobAssignment.EnvVarsEntry
+	nil,                      // 17: atlantis.agent.JobAssignment.MetadataEntry
+	nil,                      // 18: atlantis.agent.WorkflowStep.ExtraArgsEntry
 }
 var file_proto_atlantis_agent_proto_depIdxs = []int32{
 	1,  // 0: atlantis.agent.AgentMessage.registration:type_name -> atlantis.agent.Registration
 	2,  // 1: atlantis.agent.AgentMessage.heartbeat:type_name -> atlantis.agent.Heartbeat
 	3,  // 2: atlantis.agent.AgentMessage.job_result:type_name -> atlantis.agent.JobResult
 	4,  // 3: atlantis.agent.AgentMessage.capacity_update:type_name -> atlantis.agent.CapacityUpdate
-	13, // 4: atlantis.agent.Registration.labels:type_name -> atlantis.agent.Registration.LabelsEntry
+	15, // 4: atlantis.agent.Registration.labels:type_name -> atlantis.agent.Registration.LabelsEntry
 	6,  // 5: atlantis.agent.JobAssignment.vcs_credentials:type_name -> atlantis.agent.VCSCredentials
-	14, // 6: atlantis.agent.JobAssignment.env_vars:type_name -> atlantis.agent.JobAssignment.EnvVarsEntry
+	16, // 6: atlantis.agent.JobAssignment.env_vars:type_name -> atlantis.agent.JobAssignment.EnvVarsEntry
 	7,  // 7: atlantis.agent.JobAssignment.workflow:type_name -> atlantis.agent.WorkflowConfig
-	15, // 8: atlantis.agent.JobAssignment.metadata:type_name -> atlantis.agent.JobAssignment.MetadataEntry
+	17, // 8: atlantis.agent.JobAssignment.metadata:type_name -> atlantis.agent.JobAssignment.MetadataEntry
 	8,  // 9: atlantis.agent.WorkflowConfig.plan_steps:type_name -> atlantis.agent.WorkflowStep
 	8,  // 10: atlantis.agent.WorkflowConfig.apply_steps:type_name -> atlantis.agent.WorkflowStep
-	16, // 11: atlantis.agent.WorkflowStep.extra_args:type_name -> atlantis.agent.WorkflowStep.ExtraArgsEntry
+	18, // 11: atlantis.agent.WorkflowStep.extra_args:type_name -> atlantis.agent.WorkflowStep.ExtraArgsEntry
 	5,  // 12: atlantis.agent.JobDetails.assignment:type_name -> atlantis.agent.JobAssignment
-	0,  // 13: atlantis.agent.AgentService.StreamJobs:input_type -> atlantis.agent.AgentMessage
-	9,  // 14: atlantis.agent.AgentService.ReportJobStatus:input_type -> atlantis.agent.JobStatusUpdate
-	10, // 15: atlantis.agent.AgentService.GetJob:input_type -> atlantis.agent.JobRequest
-	5,  // 16: atlantis.agent.AgentService.StreamJobs:output_type -> atlantis.agent.JobAssignment
-	12, // 17: atlantis.agent.AgentService.ReportJobStatus:output_type -> atlantis.agent.Ack
-	11, // 18: atlantis.agent.AgentService.GetJob:output_type -> atlantis.agent.JobDetails
-	16, // [16:19] is the sub-list for method output_type
-	13, // [13:16] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	5,  // 13: atlantis.agent.SyncJobsResponse.jobs:type_name -> atlantis.agent.JobAssignment
+	0,  // 14: atlantis.agent.AgentService.StreamJobs:input_type -> atlantis.agent.AgentMessage
+	9,  // 15: atlantis.agent.AgentService.ReportJobStatus:input_type -> atlantis.agent.JobStatusUpdate
+	10, // 16: atlantis.agent.AgentService.GetJob:input_type -> atlantis.agent.JobRequest
+	13, // 17: atlantis.agent.AgentService.SyncAssignedJobs:input_type -> atlantis.agent.SyncJobsRequest
+	5,  // 18: atlantis.agent.AgentService.StreamJobs:output_type -> atlantis.agent.JobAssignment
+	12, // 19: atlantis.agent.AgentService.ReportJobStatus:output_type -> atlantis.agent.Ack
+	11, // 20: atlantis.agent.AgentService.GetJob:output_type -> atlantis.agent.JobDetails
+	14, // 21: atlantis.agent.AgentService.SyncAssignedJobs:output_type -> atlantis.agent.SyncJobsResponse
+	18, // [18:22] is the sub-list for method output_type
+	14, // [14:18] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_proto_atlantis_agent_proto_init() }
@@ -1277,7 +1377,7 @@ func file_proto_atlantis_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_atlantis_agent_proto_rawDesc), len(file_proto_atlantis_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

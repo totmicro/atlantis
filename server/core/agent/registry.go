@@ -112,6 +112,13 @@ func (r *Registry) Deregister(ctx context.Context, controllerID string) error {
 
 // SetStatus updates the status of an agent
 func (r *Registry) SetStatus(ctx context.Context, controllerID string, status AgentStatus) error {
+	// Validate that controllerID is a valid UUID
+	// Ephemeral agents use pod names (not UUIDs) and aren't stored in the database
+	if !isValidUUID(controllerID) {
+		// This is expected for ephemeral agents
+		return fmt.Errorf("agent not found")
+	}
+
 	var dbStatus db.AgentStatus
 	switch status {
 	case AgentStatusActive:
@@ -222,4 +229,25 @@ func GenerateToken() (string, error) {
 	// For now, return a simple token
 	// In production, use crypto/rand
 	return fmt.Sprintf("agent-token-%d", time.Now().UnixNano()), nil
+}
+
+// isValidUUID checks if a string is a valid UUID format (basic validation)
+func isValidUUID(s string) bool {
+	// UUID format: 8-4-4-4-12 hexadecimal characters
+	// Example: 550e8400-e29b-41d4-a716-446655440000
+	if len(s) != 36 {
+		return false
+	}
+	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

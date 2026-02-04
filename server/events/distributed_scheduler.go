@@ -235,7 +235,8 @@ func (d *DistributedScheduler) ScheduleJob(ctx command.ProjectContext) (string, 
 	// This avoids waiting for the 5-second polling interval
 	go func() {
 		if job, agent, err := d.scheduler.AssignNextJob(); err != nil {
-			d.logger.Warn("immediate job assignment failed: %v", err)
+			// Expected - job may already be assigned or no agents available
+			d.logger.Debug("immediate job assignment skipped: %v", err)
 		} else if job != nil && agent != nil {
 			d.logger.Info("immediately assigned job %s to agent %s", job.ID, agent.ID)
 		} else {

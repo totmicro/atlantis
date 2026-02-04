@@ -285,17 +285,28 @@ func (s *PostgresAgentStore) GetAvailable(ctx context.Context, labels map[string
 	for rows.Next() {
 		agent := &AgentController{}
 		var availableSlots int
+		var labelsJSON []byte
 
 		err := rows.Scan(
 			&agent.ID,
 			&agent.Name,
 			&agent.ClusterName,
+			&labelsJSON,
 			&agent.CurrentJobs,
 			&agent.Capacity,
 			&availableSlots,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning agent: %w", err)
+		}
+
+		// Unmarshal labels
+		if len(labelsJSON) > 0 {
+			if err := json.Unmarshal(labelsJSON, &agent.Labels); err != nil {
+				return nil, fmt.Errorf("unmarshaling agent labels: %w", err)
+			}
+		} else {
+			agent.Labels = make(map[string]string)
 		}
 
 		agents = append(agents, agent)

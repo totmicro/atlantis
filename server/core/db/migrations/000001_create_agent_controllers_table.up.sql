@@ -41,13 +41,13 @@ CREATE TABLE IF NOT EXISTS agent_controllers (
 );
 
 -- Indexes
-CREATE INDEX idx_agent_controllers_status ON agent_controllers(status);
-CREATE INDEX idx_agent_controllers_heartbeat ON agent_controllers(last_heartbeat);
-CREATE INDEX idx_agent_controllers_labels ON agent_controllers USING GIN(labels) WHERE labels IS NOT NULL;
-CREATE INDEX idx_agent_controllers_cluster ON agent_controllers(cluster_name, namespace);
+CREATE INDEX IF NOT EXISTS idx_agent_controllers_status ON agent_controllers(status);
+CREATE INDEX IF NOT EXISTS idx_agent_controllers_heartbeat ON agent_controllers(last_heartbeat);
+CREATE INDEX IF NOT EXISTS idx_agent_controllers_labels ON agent_controllers USING GIN(labels) WHERE labels IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_agent_controllers_cluster ON agent_controllers(cluster_name, namespace);
 
 -- Partial index for active agents (removed NOW() which is not immutable)
-CREATE INDEX idx_agent_controllers_active ON agent_controllers(status, last_heartbeat, capacity, current_jobs)
+CREATE INDEX IF NOT EXISTS idx_agent_controllers_active ON agent_controllers(status, last_heartbeat, capacity, current_jobs)
     WHERE status = 'active';
 
 -- Function to update heartbeat

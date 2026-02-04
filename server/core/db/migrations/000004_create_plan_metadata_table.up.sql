@@ -35,11 +35,11 @@ CREATE TABLE IF NOT EXISTS plan_metadata (
 );
 
 -- Indexes
-CREATE INDEX idx_plan_metadata_expires ON plan_metadata(expires_at) 
+CREATE INDEX IF NOT EXISTS idx_plan_metadata_expires ON plan_metadata(expires_at) 
     WHERE expires_at IS NOT NULL AND deleted = FALSE;
-CREATE INDEX idx_plan_metadata_unapplied ON plan_metadata(created_at) 
+CREATE INDEX IF NOT EXISTS idx_plan_metadata_unapplied ON plan_metadata(created_at) 
     WHERE applied = FALSE AND deleted = FALSE;
-CREATE INDEX idx_plan_metadata_size ON plan_metadata(plan_size_bytes);
+CREATE INDEX IF NOT EXISTS idx_plan_metadata_size ON plan_metadata(plan_size_bytes);
 
 -- Function to mark plan as accessed (e.g., during apply)
 CREATE OR REPLACE FUNCTION mark_plan_accessed(
@@ -179,6 +179,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Drop trigger if it exists before creating
+DROP TRIGGER IF EXISTS trigger_create_plan_metadata ON jobs;
 
 CREATE TRIGGER trigger_create_plan_metadata
     AFTER INSERT OR UPDATE OF plan_data ON jobs

@@ -128,6 +128,8 @@ const (
 	GRPCAgentTokenFlag               = "grpc-agent-token"
 	ExecutionModeFlag                = "execution-mode"
 	DefaultExecutionModeFlag         = "default-execution-mode"
+	JobNoAgentMaxRetriesFlag         = "job-no-agent-max-retries"
+	JobNoAgentRetryIntervalFlag      = "job-no-agent-retry-interval"
 	IncludeGitUntrackedFiles         = "include-git-untracked-files"
 	APISecretFlag                    = "api-secret"
 	HidePrevPlanComments             = "hide-prev-plan-comments"
@@ -361,6 +363,14 @@ var stringFlags = map[string]stringFlag{
 			"If not set, inherits the value from --execution-mode. " +
 			"Projects can override this in their atlantis.yaml.",
 		defaultValue: "",
+	},
+	JobNoAgentMaxRetriesFlag: {
+		description:  "Maximum number of retry attempts before canceling a job when no matching agents are available (distributed mode only).",
+		defaultValue: "5",
+	},
+	JobNoAgentRetryIntervalFlag: {
+		description:  "Interval in seconds between retry attempts when no matching agents are available (distributed mode only).",
+		defaultValue: "60",
 	},
 	GHHostnameFlag: {
 		description:  "Hostname of your Github Enterprise installation. If using github.com, no need to set.",

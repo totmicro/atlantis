@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS pull_project_status (
 );
 
 -- Index for efficient pull status lookups
-CREATE INDEX idx_pull_project_status_lookup ON pull_project_status(repo_full_name, pull_num);
+CREATE INDEX IF NOT EXISTS idx_pull_project_status_lookup ON pull_project_status(repo_full_name, pull_num);
 
 -- Index for cleanup queries
-CREATE INDEX idx_pull_project_status_updated ON pull_project_status(updated_at);
+CREATE INDEX IF NOT EXISTS idx_pull_project_status_updated ON pull_project_status(updated_at);
 
 -- Function to update timestamp on status changes
 CREATE OR REPLACE FUNCTION update_pull_project_status_timestamp()
@@ -28,6 +28,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Drop trigger if it exists before creating
+DROP TRIGGER IF EXISTS trigger_update_pull_project_status_timestamp ON pull_project_status;
 
 -- Trigger to auto-update timestamp
 CREATE TRIGGER trigger_update_pull_project_status_timestamp

@@ -105,6 +105,12 @@ func (r *Router) agentMatchesJob(agent *db.AgentController, job *jobs.Job) bool 
 func (r *Router) agentMatchesDBJob(agent *db.AgentController, job *db.Job) bool {
 	agentLabels := agent.Labels
 
+	// Debug logging (will be removed after troubleshooting)
+	if len(job.Labels) == 0 {
+		// No job labels means any agent matches
+		return true
+	}
+
 	if r.config.EnableStrictLabelMatching {
 		// All job labels must match exactly
 		return r.strictMatch(agentLabels, job.Labels)

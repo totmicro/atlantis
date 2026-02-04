@@ -43,6 +43,7 @@ import (
 	prometheus "github.com/uber-go/tally/v4/prometheus"
 	"github.com/urfave/negroni/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/runatlantis/atlantis/proto"
 	"github.com/runatlantis/atlantis/server/core/agent"
@@ -618,6 +619,16 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		grpcServer = grpc.NewServer(
 			grpc.UnaryInterceptor(authInterceptor.Unary()),
 			grpc.StreamInterceptor(authInterceptor.Stream()),
+			// Configure keepalive enforcement to match client expectations
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             20 * time.Second, // Allow pings every 20s (client sends every 30s)
+				PermitWithoutStream: true,             // Allow keepalive pings when no active RPCs
+			}),
+			// Configure server keepalive params
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				Time:    60 * time.Second, // Send keepalive ping if no activity for 60s
+				Timeout: 20 * time.Second, // Wait 20s for keepalive ack
+			}),
 		)
 
 		// Register agent service (pass shared token for auto-registration)
@@ -924,6 +935,23 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		resultHandler := agent.NewDistributedJobResultHandler(resultUpdater, commitStatusUpdater, logger)
 		agentService.SetResultHandler(resultHandler)
 		logger.Info("result handler configured for posting to PRs using standard Atlantis mechanisms")
+
+		// Start no-agent monitor if retry configuration is set
+		logger.Info("job auto-cancel config: max_retries=%d, interval=%d", userConfig.JobNoAgentMaxRetries, userConfig.JobNoAgentRetryInterval)
+		if userConfig.JobNoAgentMaxRetries > 0 && userConfig.JobNoAgentRetryInterval > 0 {
+			noAgentMonitor := scheduler.NewNoAgentMonitor(
+				jobStore,
+				logger,
+				userConfig.JobNoAgentMaxRetries,
+				userConfig.JobNoAgentRetryInterval,
+				resultUpdater,
+			)
+			go noAgentMonitor.Start()
+			logger.Info("no-agent monitor started (max retries: %d, interval: %ds)",
+				userConfig.JobNoAgentMaxRetries, userConfig.JobNoAgentRetryInterval)
+		} else {
+			logger.Warn("no-agent monitor NOT started - feature disabled (set both --job-no-agent-max-retries and --job-no-agent-retry-interval to enable)")
+		}
 	}
 
 	autoMerger := &events.AutoMerger{

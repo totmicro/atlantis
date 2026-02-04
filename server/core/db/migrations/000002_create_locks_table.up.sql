@@ -25,9 +25,9 @@ CREATE TABLE IF NOT EXISTS locks (
 );
 
 -- Indexes
-CREATE INDEX idx_locks_repo_pull ON locks(repo_full_name, pull_num);
-CREATE INDEX idx_locks_locked_by ON locks(locked_by);
-CREATE INDEX idx_locks_expires_at ON locks(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_locks_repo_pull ON locks(repo_full_name, pull_num);
+CREATE INDEX IF NOT EXISTS idx_locks_locked_by ON locks(locked_by);
+CREATE INDEX IF NOT EXISTS idx_locks_expires_at ON locks(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Function to auto-generate lock ID
 CREATE OR REPLACE FUNCTION generate_lock_id(

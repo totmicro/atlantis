@@ -18,6 +18,7 @@ type JobStore interface {
 	UpdateStatus(ctx context.Context, id string, status JobStatus) error
 	UpdateResult(ctx context.Context, id string, status JobStatus, output string, planData []byte, exitCode int, errorMsg string) error
 	GetQueued(ctx context.Context, limit int) ([]*Job, error)
+	GetByAgentAndStatus(ctx context.Context, agentID string, status string) ([]*Job, error)
 	AssignToAgent(ctx context.Context, jobID, agentControllerID string) error
 	UpdateAgentPod(ctx context.Context, jobID, podName string) error
 	SavePlan(ctx context.Context, jobID string, plan []byte) error
@@ -27,6 +28,7 @@ type JobStore interface {
 	SetError(ctx context.Context, jobID string, errorMsg string, exitCode int) error
 	Complete(ctx context.Context, jobID string, status JobStatus) error
 	ListByRepo(ctx context.Context, repoFullName string, pullNum int) ([]*Job, error)
+	IncrementAttemptCount(ctx context.Context, jobID string) error
 }
 
 // PostgresJobStore implements JobStore using PostgreSQL
@@ -236,7 +238,7 @@ func (s *PostgresJobStore) GetQueued(ctx context.Context, limit int) ([]*Job, er
 	query := `
 		SELECT id, repo_full_name, repo_clone_url, pull_num, pull_branch, pull_base_branch,
 			pull_commit_sha, project_name, project_dir, workspace, command, status,
-			created_at, labels, terraform_version, timeout_seconds, triggered_by
+			created_at, labels, terraform_version, timeout_seconds, triggered_by, attempt_count
 		FROM jobs
 		WHERE status = 'queued'
 		ORDER BY created_at ASC
@@ -258,7 +260,7 @@ func (s *PostgresJobStore) GetQueued(ctx context.Context, limit int) ([]*Job, er
 			&job.ID, &job.RepoFullName, &job.RepoCloneURL, &job.PullNum, &job.PullBranch,
 			&job.PullBaseBranch, &job.PullCommitSHA, &job.ProjectName, &job.ProjectDir,
 			&job.Workspace, &job.Command, &job.Status, &job.CreatedAt, &labelsJSON,
-			&job.TerraformVersion, &job.TimeoutSeconds, &job.TriggeredBy,
+			&job.TerraformVersion, &job.TimeoutSeconds, &job.TriggeredBy, &job.AttemptCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning job: %w", err)
@@ -268,6 +270,67 @@ func (s *PostgresJobStore) GetQueued(ctx context.Context, limit int) ([]*Job, er
 			if err := json.Unmarshal(labelsJSON, &job.Labels); err != nil {
 				return nil, fmt.Errorf("unmarshaling labels: %w", err)
 			}
+		} else {
+			// Initialize empty map if no labels present
+			job.Labels = make(map[string]string)
+		}
+
+		jobs = append(jobs, job)
+	}
+
+	return jobs, nil
+}
+
+// GetByAgentAndStatus retrieves jobs for a specific agent with a specific status
+func (s *PostgresJobStore) GetByAgentAndStatus(ctx context.Context, agentID string, status string) ([]*Job, error) {
+	query := `
+		SELECT id, repo_full_name, repo_clone_url, pull_num, pull_branch, pull_base_branch,
+			pull_commit_sha, project_name, project_dir, workspace, command, status,
+			created_at, labels, terraform_version, timeout_seconds, triggered_by,
+			project_context_json, plan_data
+		FROM jobs
+		WHERE agent_controller_id = $1 AND status = $2
+		ORDER BY created_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, agentID, status)
+	if err != nil {
+		return nil, fmt.Errorf("querying jobs by agent: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*Job
+	for rows.Next() {
+		job := &Job{}
+		var labelsJSON []byte
+		var projectContextJSON []byte
+		var planData []byte
+
+		err := rows.Scan(
+			&job.ID, &job.RepoFullName, &job.RepoCloneURL, &job.PullNum, &job.PullBranch,
+			&job.PullBaseBranch, &job.PullCommitSHA, &job.ProjectName, &job.ProjectDir,
+			&job.Workspace, &job.Command, &job.Status, &job.CreatedAt, &labelsJSON,
+			&job.TerraformVersion, &job.TimeoutSeconds, &job.TriggeredBy,
+			&projectContextJSON, &planData,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning job: %w", err)
+		}
+
+		if len(labelsJSON) > 0 {
+			if err := json.Unmarshal(labelsJSON, &job.Labels); err != nil {
+				return nil, fmt.Errorf("unmarshaling labels: %w", err)
+			}
+		} else {
+			job.Labels = make(map[string]string)
+		}
+
+		if len(projectContextJSON) > 0 {
+			job.ProjectContextJSON = projectContextJSON
+		}
+
+		if len(planData) > 0 {
+			job.PlanData = planData
 		}
 
 		jobs = append(jobs, job)
@@ -419,6 +482,16 @@ func (s *PostgresJobStore) ListByRepo(ctx context.Context, repoFullName string, 
 	}
 
 	return jobs, nil
+}
+
+// IncrementAttemptCount increments the attempt_count for a job
+func (s *PostgresJobStore) IncrementAttemptCount(ctx context.Context, jobID string) error {
+	query := `UPDATE jobs SET attempt_count = attempt_count + 1 WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, jobID)
+	if err != nil {
+		return fmt.Errorf("incrementing attempt count: %w", err)
+	}
+	return nil
 }
 
 // Helper function to convert empty strings to nil

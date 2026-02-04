@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,7 +142,12 @@ func (s *GRPCServer) StreamJobs(stream proto.AgentService_StreamJobsServer) erro
 
 		msg, err := stream.Recv()
 		if err != nil {
-			s.logger.Warn("agent stream receive error: %s", err)
+			// Handle graceful disconnection vs actual errors
+			if isGracefulDisconnect(err) {
+				s.logger.Info("agent %s disconnected gracefully", controllerID)
+				return nil
+			}
+			s.logger.Warn("agent %s stream receive error: %s", controllerID, err)
 			return err
 		}
 
@@ -387,11 +393,30 @@ func (s *GRPCServer) handleDisconnect(controllerID string) {
 	}
 	s.jobChannelsMu.Unlock()
 
-	// Set agent to offline
+	// Set agent to offline (only for persistent agents, not ephemeral)
+	// controllerID is the agent UUID for persistent agents, or pod name for ephemeral
+	// Ephemeral agents are not in the database, so skip status update
 	ctx := context.Background()
+
+	// Try to set status - it will fail for ephemeral agents (not in DB), which is expected
 	if err := s.registry.SetStatus(ctx, controllerID, AgentStatusOffline); err != nil {
-		s.logger.Err("failed to set agent %s to offline: %s", controllerID, err)
+		// Only log as warning if it's not a "not found" error (ephemeral agents)
+		if err.Error() != "agent not found" && !isUUIDError(err) {
+			s.logger.Err("failed to set agent %s to offline: %s", controllerID, err)
+		} else {
+			s.logger.Info("ephemeral agent %s disconnected (not in database)", controllerID)
+		}
 	}
+}
+
+// isUUIDError checks if an error is due to invalid UUID syntax
+func isUUIDError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "invalid input syntax for type uuid") ||
+		strings.Contains(errMsg, "invalid UUID format")
 }
 
 // addConnection tracks a new agent connection
@@ -562,6 +587,34 @@ func (s *GRPCServer) GetJob(ctx context.Context, req *proto.JobRequest) (*proto.
 	}, nil
 }
 
+// SyncAssignedJobs returns all jobs currently assigned to an agent
+// Used after reconnection to catch up on missed assignments
+func (s *GRPCServer) SyncAssignedJobs(ctx context.Context, req *proto.SyncJobsRequest) (*proto.SyncJobsResponse, error) {
+	// Look up agent by name to get UUID
+	agent, err := s.registry.GetAgentByName(ctx, req.ControllerId)
+	if err != nil {
+		s.logger.Err("failed to get agent by name %s: %s", req.ControllerId, err)
+		return nil, status.Error(codes.NotFound, "agent not found")
+	}
+
+	// Query for jobs assigned to this agent (by UUID)
+	jobs, err := s.jobStore.GetByAgentAndStatus(ctx, agent.ID, "assigned")
+	if err != nil {
+		s.logger.Err("failed to get assigned jobs for agent %s (id: %s): %s", req.ControllerId, agent.ID, err)
+		return nil, status.Error(codes.Internal, "failed to query jobs")
+	}
+
+	assignments := make([]*proto.JobAssignment, 0, len(jobs))
+	for _, job := range jobs {
+		assignments = append(assignments, s.jobToProto(job))
+	}
+
+	s.logger.Info("returning %d assigned jobs for agent %s", len(assignments), req.ControllerId)
+	return &proto.SyncJobsResponse{
+		Jobs: assignments,
+	}, nil
+}
+
 // ExtractAgentID gets the agent controller ID from gRPC metadata
 func ExtractAgentID(ctx context.Context) (string, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -575,4 +628,28 @@ func ExtractAgentID(ctx context.Context) (string, error) {
 	}
 
 	return ids[0], nil
+}
+
+// isGracefulDisconnect checks if an error is from an expected disconnection
+func isGracefulDisconnect(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for context cancellation (normal shutdown)
+	if err == context.Canceled {
+		return true
+	}
+
+	// Check for EOF (connection closed normally)
+	if err.Error() == "EOF" {
+		return true
+	}
+
+	// Check for gRPC Canceled status
+	if st, ok := status.FromError(err); ok {
+		return st.Code() == codes.Canceled
+	}
+
+	return false
 }

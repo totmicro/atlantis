@@ -20,9 +20,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_StreamJobs_FullMethodName      = "/atlantis.agent.AgentService/StreamJobs"
-	AgentService_ReportJobStatus_FullMethodName = "/atlantis.agent.AgentService/ReportJobStatus"
-	AgentService_GetJob_FullMethodName          = "/atlantis.agent.AgentService/GetJob"
+	AgentService_StreamJobs_FullMethodName       = "/atlantis.agent.AgentService/StreamJobs"
+	AgentService_ReportJobStatus_FullMethodName  = "/atlantis.agent.AgentService/ReportJobStatus"
+	AgentService_GetJob_FullMethodName           = "/atlantis.agent.AgentService/GetJob"
+	AgentService_SyncAssignedJobs_FullMethodName = "/atlantis.agent.AgentService/SyncAssignedJobs"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -38,6 +39,9 @@ type AgentServiceClient interface {
 	ReportJobStatus(ctx context.Context, in *JobStatusUpdate, opts ...grpc.CallOption) (*Ack, error)
 	// GetJob retrieves job details by ID (alternative to streaming)
 	GetJob(ctx context.Context, in *JobRequest, opts ...grpc.CallOption) (*JobDetails, error)
+	// SyncAssignedJobs retrieves all jobs currently assigned to this agent
+	// Used after reconnection to catch up on missed assignments
+	SyncAssignedJobs(ctx context.Context, in *SyncJobsRequest, opts ...grpc.CallOption) (*SyncJobsResponse, error)
 }
 
 type agentServiceClient struct {
@@ -81,6 +85,16 @@ func (c *agentServiceClient) GetJob(ctx context.Context, in *JobRequest, opts ..
 	return out, nil
 }
 
+func (c *agentServiceClient) SyncAssignedJobs(ctx context.Context, in *SyncJobsRequest, opts ...grpc.CallOption) (*SyncJobsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncJobsResponse)
+	err := c.cc.Invoke(ctx, AgentService_SyncAssignedJobs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -94,6 +108,9 @@ type AgentServiceServer interface {
 	ReportJobStatus(context.Context, *JobStatusUpdate) (*Ack, error)
 	// GetJob retrieves job details by ID (alternative to streaming)
 	GetJob(context.Context, *JobRequest) (*JobDetails, error)
+	// SyncAssignedJobs retrieves all jobs currently assigned to this agent
+	// Used after reconnection to catch up on missed assignments
+	SyncAssignedJobs(context.Context, *SyncJobsRequest) (*SyncJobsResponse, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -112,6 +129,9 @@ func (UnimplementedAgentServiceServer) ReportJobStatus(context.Context, *JobStat
 }
 func (UnimplementedAgentServiceServer) GetJob(context.Context, *JobRequest) (*JobDetails, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetJob not implemented")
+}
+func (UnimplementedAgentServiceServer) SyncAssignedJobs(context.Context, *SyncJobsRequest) (*SyncJobsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncAssignedJobs not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -177,6 +197,24 @@ func _AgentService_GetJob_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_SyncAssignedJobs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncJobsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).SyncAssignedJobs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_SyncAssignedJobs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).SyncAssignedJobs(ctx, req.(*SyncJobsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -191,6 +229,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetJob",
 			Handler:    _AgentService_GetJob_Handler,
+		},
+		{
+			MethodName: "SyncAssignedJobs",
+			Handler:    _AgentService_SyncAssignedJobs_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

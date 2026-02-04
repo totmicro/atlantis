@@ -15,6 +15,10 @@ service AgentService {
   
   // GetJob retrieves job details by ID (alternative to streaming)
   rpc GetJob(JobRequest) returns (JobDetails);
+  
+  // SyncAssignedJobs retrieves all jobs currently assigned to this agent
+  // Used after reconnection to catch up on missed assignments
+  rpc SyncAssignedJobs(SyncJobsRequest) returns (SyncJobsResponse);
 }
 
 // AgentMessage represents messages sent from agent controller to master
@@ -151,4 +155,14 @@ message JobDetails {
 message Ack {
   bool success = 1;
   string message = 2;
+}
+
+// SyncJobsRequest to query for assigned jobs
+message SyncJobsRequest {
+  string controller_id = 1;         // Agent controller ID
+}
+
+// SyncJobsResponse with list of assigned jobs
+message SyncJobsResponse {
+  repeated JobAssignment jobs = 1;  // Jobs assigned to this agent
 }

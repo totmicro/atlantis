@@ -255,8 +255,8 @@ type DefaultProjectCommandRunner struct {
 	CommandRequirementHandler CommandRequirementHandler
 	CancellationTracker       CancellationTracker
 	CommitStatusUpdater       jobs.ProjectStatusUpdater // For setting per-project VCS status
-	JobScheduler              JobScheduler         // For distributed execution
-	JobStore                  *db.PostgresJobStore // For distributed plan storage
+	JobScheduler              JobScheduler              // For distributed execution
+	JobStore                  *db.PostgresJobStore      // For distributed plan storage
 }
 
 // Plan runs terraform plan for the project described by ctx.

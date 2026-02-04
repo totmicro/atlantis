@@ -12,6 +12,7 @@ import (
 	"github.com/runatlantis/atlantis/server/logging"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -179,6 +180,15 @@ func (ac *AgentController) connect() error {
 	opts = append(opts, grpc.WithUnaryInterceptor(ac.unaryAuthInterceptor))
 	opts = append(opts, grpc.WithStreamInterceptor(ac.streamAuthInterceptor))
 
+	// Add keepalive to detect dead connections faster
+	opts = append(opts,
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             3 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+
 	ac.logger.Info("connecting to master at %s", ac.config.MasterAddress)
 
 	conn, err := grpc.Dial(ac.config.MasterAddress, opts...)
@@ -242,6 +252,9 @@ func (ac *AgentController) receiveJobs() {
 
 	ac.logger.Info("started receiving jobs")
 
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+
 	for {
 		select {
 		case <-ac.ctx.Done():
@@ -252,13 +265,157 @@ func (ac *AgentController) receiveJobs() {
 
 		assignment, err := ac.stream.Recv()
 		if err != nil {
-			ac.logger.Err("error receiving job: %s", err)
-			// TODO: Implement reconnection logic
-			return
+			// Check if this is a graceful shutdown
+			if ac.ctx.Err() != nil {
+				ac.logger.Info("job receiver context cancelled, stopping")
+				return
+			}
+
+			// Network error, connection lost, or master restarted
+			ac.logger.Warn("error receiving job (will reconnect): %s", err)
+
+			// Try to reconnect
+			ac.logger.Info("attempting to reconnect to master (backoff: %v)", backoff)
+			time.Sleep(backoff)
+
+			// Exponential backoff
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+
+			// Attempt reconnection
+			if err := ac.reconnect(); err != nil {
+				ac.logger.Err("failed to reconnect: %s", err)
+				continue // Try again on next iteration
+			}
+
+			// Reset backoff on successful reconnection
+			backoff = time.Second
+			ac.logger.Info("successfully reconnected to master")
+
+			// Query for any jobs that were assigned while disconnected
+			go ac.syncAssignedJobs()
+
+			continue
 		}
+
+		// Reset backoff on successful message receive
+		backoff = time.Second
 
 		ac.logger.Info("received job assignment: %s", assignment.JobId)
 		ac.handleJobAssignment(assignment)
+	}
+}
+
+// reconnect attempts to re-establish connection to master
+func (ac *AgentController) reconnect() error {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+
+	// Close old connection if it exists
+	if ac.conn != nil {
+		ac.conn.Close()
+		ac.conn = nil
+		ac.stream = nil
+	}
+
+	// Re-establish connection using existing connect logic
+	var opts []grpc.DialOption
+
+	if ac.config.UseTLS {
+		ac.logger.Warn("TLS not yet implemented, using insecure connection")
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	// Add metadata interceptor for authentication
+	opts = append(opts, grpc.WithUnaryInterceptor(ac.unaryAuthInterceptor))
+	opts = append(opts, grpc.WithStreamInterceptor(ac.streamAuthInterceptor))
+
+	// Add keepalive to detect dead connections faster
+	opts = append(opts,
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             3 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+
+	ac.logger.Info("reconnecting to master at %s", ac.config.MasterAddress)
+
+	conn, err := grpc.Dial(ac.config.MasterAddress, opts...)
+	if err != nil {
+		return fmt.Errorf("failed to dial: %w", err)
+	}
+
+	ac.conn = conn
+	ac.client = proto.NewAgentServiceClient(conn)
+
+	// Open bidirectional stream
+	stream, err := ac.client.StreamJobs(ac.ctx)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to open stream: %w", err)
+	}
+
+	ac.stream = stream
+
+	// Send registration message
+	msg := &proto.AgentMessage{
+		Message: &proto.AgentMessage_Registration{
+			Registration: &proto.Registration{
+				ControllerId: ac.config.ControllerID,
+				Token:        ac.config.Token,
+				ClusterName:  ac.config.ClusterName,
+				Namespace:    ac.config.Namespace,
+				Labels:       ac.config.Labels,
+				Capacity:     int32(ac.config.MaxConcurrentJobs),
+				Version:      ac.config.Version,
+			},
+		},
+	}
+
+	if err := stream.Send(msg); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to send registration: %w", err)
+	}
+
+	ac.connected = true
+	ac.logger.Info("reconnected and registered with master")
+	return nil
+}
+
+// syncAssignedJobs queries the master for any jobs assigned to this agent
+// This is called after reconnection to pick up jobs that were assigned while disconnected
+func (ac *AgentController) syncAssignedJobs() {
+	if ac.client == nil {
+		ac.logger.Warn("cannot sync jobs: not connected to master")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &proto.SyncJobsRequest{
+		ControllerId: ac.config.ControllerID,
+	}
+
+	resp, err := ac.client.SyncAssignedJobs(ctx, req)
+	if err != nil {
+		ac.logger.Warn("failed to sync assigned jobs: %v", err)
+		return
+	}
+
+	if len(resp.Jobs) == 0 {
+		ac.logger.Info("no pending jobs to sync after reconnection")
+		return
+	}
+
+	ac.logger.Info("syncing %d assigned jobs after reconnection", len(resp.Jobs))
+	for _, job := range resp.Jobs {
+		ac.handleJobAssignment(job)
 	}
 }
 
