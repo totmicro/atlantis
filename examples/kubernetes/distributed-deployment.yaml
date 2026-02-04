@@ -177,10 +177,6 @@ spec:
         - --db-password-file=/secrets/db-password
         - --grpc-port=50051
         - --grpc-agent-token-file=/secrets/agent-token
-        - --grpc-port=50051
-        - --execution-mode=distributed
-        - --default-execution-mode=distributed
-        - --locking-db-type=postgres
         ports:
         - name: http
           containerPort: 4141
@@ -249,10 +245,9 @@ metadata:
   namespace: atlantis
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: atlantis-agent-controller
-  namespace: atlantis
 rules:
 - apiGroups: ["batch"]
   resources: ["jobs"]
@@ -262,13 +257,12 @@ rules:
   verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: atlantis-agent-controller
-  namespace: atlantis
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: atlantis-agent-controller
 subjects:
 - kind: ServiceAccount
@@ -296,15 +290,16 @@ spec:
         image: ghcr.io/runatlantis/atlantis:latest
         args:
         - agent
-        - --agent-master-address=atlantis-grpc.atlantis.svc.cluster.local:50051
+        - --agent-master-address=grpc://atlantis-grpc.atlantis.svc.cluster.local:50051
         - --agent-token-file=/secrets/agent-token
         - --agent-cluster-name=primary-cluster
         - --agent-namespace=atlantis
         - --agent-capacity=20
         - --agent-labels=region=us-east-1,environment=production,default=true
-        - --gh-app-id=xxxxxx
-        - --gh-app-key-file=/var/github-app/key.pem
+        - --gh-app-id=xxxx
+        - --gh-app-key-file=/xxxx/key.pem
         - --agent-mode=ephemeral
+  
         env:
         - name: HOSTNAME
           valueFrom:

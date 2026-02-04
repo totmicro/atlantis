@@ -372,14 +372,43 @@ func runAgent(cmd *cobra.Command) error {
 		heartbeatDuration = 30 * time.Second
 	}
 
+	// Determine if using TLS based on URL scheme or port
+	useTLS := false
+	cleanAddress := masterAddress
+	if strings.HasPrefix(masterAddress, "grpcs://") || strings.HasPrefix(masterAddress, "https://") {
+		useTLS = true
+		// Strip scheme prefix
+		if strings.HasPrefix(masterAddress, "grpcs://") {
+			cleanAddress = strings.TrimPrefix(masterAddress, "grpcs://")
+		} else {
+			cleanAddress = strings.TrimPrefix(masterAddress, "https://")
+		}
+		logger.Info("detected secure scheme, enabling TLS for gRPC connection to %s", cleanAddress)
+	} else if strings.HasPrefix(masterAddress, "grpc://") || strings.HasPrefix(masterAddress, "http://") {
+		useTLS = false
+		// Strip scheme prefix
+		if strings.HasPrefix(masterAddress, "grpc://") {
+			cleanAddress = strings.TrimPrefix(masterAddress, "grpc://")
+		} else {
+			cleanAddress = strings.TrimPrefix(masterAddress, "http://")
+		}
+		logger.Info("detected insecure scheme, using plaintext gRPC connection to %s", cleanAddress)
+	} else if strings.HasSuffix(masterAddress, ":443") {
+		// Fallback: assume TLS if port 443 is used without explicit scheme
+		useTLS = true
+		logger.Info("detected port 443 without scheme, enabling TLS for gRPC connection to %s", cleanAddress)
+	} else {
+		logger.Info("no TLS indicators found, using plaintext gRPC connection to %s", cleanAddress)
+	}
+
 	// Create agent configuration
 	config := controller.Config{
 		ControllerID:      agentID,
 		Token:             token,
 		ClusterName:       clusterName,
 		Namespace:         namespace,
-		MasterAddress:     masterAddress,
-		UseTLS:            false,
+		MasterAddress:     cleanAddress,
+		UseTLS:            useTLS,
 		MaxConcurrentJobs: capacity,
 		Labels:            labels,
 		Version:           "dev", // TODO: Get from build

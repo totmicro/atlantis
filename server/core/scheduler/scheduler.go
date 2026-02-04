@@ -115,8 +115,16 @@ func (s *DefaultScheduler) AssignNextJob() (*jobs.Job, *db.AgentController, erro
 						s.logger.Warn("failed to reload job after assignment: %v", err)
 					} else {
 						if err := s.jobNotifier.AssignJobToAgent(agent.ID, assignedJob); err != nil {
-							// Expected during reconnection - agent may have disconnected
+							// Agent disconnected - requeue the job immediately
 							s.logger.Info("could not notify agent %s about job %s: %v", agent.ID, dbJob.ID, err)
+							s.logger.Info("requeuing job %s (agent not connected)", dbJob.ID)
+
+							// Requeue the job so it can be assigned to another agent
+							if requeueErr := s.jobStore.RequeueJob(ctx, dbJob.ID); requeueErr != nil {
+								s.logger.Warn("failed to requeue job %s after notification failure: %v", dbJob.ID, requeueErr)
+							} else {
+								s.logger.Info("successfully requeued job %s", dbJob.ID)
+							}
 						} else {
 							s.logger.Info("notified agent %s about job %s", agent.ID, dbJob.ID)
 						}

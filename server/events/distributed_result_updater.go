@@ -172,7 +172,7 @@ func (u *DistributedResultUpdater) PostJobFailureComment(logger logging.SimpleLo
 	if len(parts) < 2 {
 		return fmt.Errorf("invalid repo full name format: %s", repoFullName)
 	}
-	
+
 	// Handle cases like "gitlab/subgroup/repo" by joining all but last part as owner
 	repoName := parts[len(parts)-1]
 	repoOwner := strings.Join(parts[:len(parts)-1], "/")

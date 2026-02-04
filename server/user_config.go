@@ -131,6 +131,10 @@ type UserConfig struct {
 	JobNoAgentMaxRetries    int `mapstructure:"job-no-agent-max-retries"`    // Max retries before canceling job when no matching agents available
 	JobNoAgentRetryInterval int `mapstructure:"job-no-agent-retry-interval"` // Interval in seconds between retry attempts
 
+	// Stale job detection configuration (distributed mode)
+	StaleJobCheckInterval int `mapstructure:"stale-job-check-interval"` // Interval in seconds to check for stale assigned jobs
+	StaleJobTimeout       int `mapstructure:"stale-job-timeout"`        // Time in seconds before an assigned job is considered stale
+
 	// SilenceNoProjects is whether Atlantis should respond to a PR if no projects are found.
 	SilenceNoProjects   bool `mapstructure:"silence-no-projects"`
 	SilenceForkPRErrors bool `mapstructure:"silence-fork-pr-errors"`

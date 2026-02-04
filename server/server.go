@@ -952,6 +952,23 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		} else {
 			logger.Warn("no-agent monitor NOT started - feature disabled (set both --job-no-agent-max-retries and --job-no-agent-retry-interval to enable)")
 		}
+
+		// Start stale job monitor if configuration is set
+		logger.Info("stale job monitor config: check_interval=%d, timeout=%d", userConfig.StaleJobCheckInterval, userConfig.StaleJobTimeout)
+		if userConfig.StaleJobCheckInterval > 0 && userConfig.StaleJobTimeout > 0 {
+			staleJobMonitor := scheduler.NewStaleJobMonitor(
+				jobStore,
+				agentStore,
+				logger,
+				userConfig.StaleJobCheckInterval,
+				userConfig.StaleJobTimeout,
+			)
+			go staleJobMonitor.Start()
+			logger.Info("stale job monitor started (check interval: %ds, timeout: %ds)",
+				userConfig.StaleJobCheckInterval, userConfig.StaleJobTimeout)
+		} else {
+			logger.Warn("stale job monitor NOT started - feature disabled (set both --stale-job-check-interval and --stale-job-timeout to enable)")
+		}
 	}
 
 	autoMerger := &events.AutoMerger{

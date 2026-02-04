@@ -29,6 +29,8 @@ type JobStore interface {
 	Complete(ctx context.Context, jobID string, status JobStatus) error
 	ListByRepo(ctx context.Context, repoFullName string, pullNum int) ([]*Job, error)
 	IncrementAttemptCount(ctx context.Context, jobID string) error
+	GetByStatus(ctx context.Context, status string, limit int) ([]*Job, error)
+	RequeueJob(ctx context.Context, jobID string) error
 }
 
 // PostgresJobStore implements JobStore using PostgreSQL
@@ -491,6 +493,105 @@ func (s *PostgresJobStore) IncrementAttemptCount(ctx context.Context, jobID stri
 	if err != nil {
 		return fmt.Errorf("incrementing attempt count: %w", err)
 	}
+	return nil
+}
+
+// GetByStatus retrieves jobs with the specified status
+func (s *PostgresJobStore) GetByStatus(ctx context.Context, status string, limit int) ([]*Job, error) {
+	query := `
+		SELECT id, repo_full_name, repo_clone_url, pull_num, pull_branch, pull_base_branch,
+		       pull_commit_sha, project_name, project_dir, workspace, command, status,
+		       agent_controller_id, agent_pod_name, assigned_at, started_at, completed_at,
+		       plan_data, output, error_message, exit_code, labels, env_vars, workflow_config,
+		       terraform_version, timeout_seconds, vcs_credentials_encrypted, metadata,
+		       triggered_by, priority, attempt_count, created_at, project_context_json
+		FROM jobs
+		WHERE status = $1
+		ORDER BY created_at ASC
+		LIMIT $2
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying jobs by status: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*Job
+	for rows.Next() {
+		job := &Job{}
+		var labels, envVars, workflowConfig, metadata, projectContextJSON []byte
+
+		err := rows.Scan(
+			&job.ID, &job.RepoFullName, &job.RepoCloneURL, &job.PullNum,
+			&job.PullBranch, &job.PullBaseBranch, &job.PullCommitSHA,
+			&job.ProjectName, &job.ProjectDir, &job.Workspace, &job.Command, &job.Status,
+			&job.AgentControllerID, &job.AgentPodName, &job.AssignedAt, &job.StartedAt, &job.CompletedAt,
+			&job.PlanData, &job.Output, &job.ErrorMessage, &job.ExitCode,
+			&labels, &envVars, &workflowConfig,
+			&job.TerraformVersion, &job.TimeoutSeconds, &job.VCSCredentialsEnc, &metadata,
+			&job.TriggeredBy, &job.Priority, &job.AttemptCount, &job.CreatedAt, &projectContextJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning job: %w", err)
+		}
+
+		// Unmarshal JSON fields
+		if len(labels) > 0 {
+			if err := json.Unmarshal(labels, &job.Labels); err != nil {
+				return nil, fmt.Errorf("unmarshalling labels: %w", err)
+			}
+		}
+		if len(envVars) > 0 {
+			if err := json.Unmarshal(envVars, &job.EnvVars); err != nil {
+				return nil, fmt.Errorf("unmarshalling env vars: %w", err)
+			}
+		}
+		if len(workflowConfig) > 0 {
+			job.WorkflowConfig = workflowConfig
+		}
+		if len(metadata) > 0 {
+			job.Metadata = metadata
+		}
+		if len(projectContextJSON) > 0 {
+			job.ProjectContextJSON = projectContextJSON
+		}
+
+		jobs = append(jobs, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating jobs: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// RequeueJob resets a job back to queued status and clears agent assignment
+func (s *PostgresJobStore) RequeueJob(ctx context.Context, jobID string) error {
+	query := `
+		UPDATE jobs
+		SET status = 'queued',
+		    agent_controller_id = NULL,
+		    agent_pod_name = NULL,
+		    assigned_at = NULL
+		WHERE id = $1
+	`
+
+	result, err := s.db.ExecContext(ctx, query, jobID)
+	if err != nil {
+		return fmt.Errorf("requeuing job: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("getting rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
 	return nil
 }
 

@@ -5,14 +5,17 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/runatlantis/atlantis/proto"
 	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/logging"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
@@ -27,8 +30,44 @@ type GRPCClient struct {
 
 // NewGRPCClient creates a new gRPC client for connecting to master
 func NewGRPCClient(address, token string, logger logging.SimpleLogging) (*GRPCClient, error) {
-	// TODO: Add TLS support
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Auto-detect TLS based on URL scheme or port
+	var opts []grpc.DialOption
+	cleanAddress := address
+	
+	if strings.HasPrefix(address, "grpcs://") || strings.HasPrefix(address, "https://") {
+		creds := credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: false,
+		})
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		// Strip scheme prefix
+		if strings.HasPrefix(address, "grpcs://") {
+			cleanAddress = strings.TrimPrefix(address, "grpcs://")
+		} else {
+			cleanAddress = strings.TrimPrefix(address, "https://")
+		}
+		logger.Info("detected secure scheme, enabling TLS for gRPC connection to %s", cleanAddress)
+	} else if strings.HasPrefix(address, "grpc://") || strings.HasPrefix(address, "http://") {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Strip scheme prefix
+		if strings.HasPrefix(address, "grpc://") {
+			cleanAddress = strings.TrimPrefix(address, "grpc://")
+		} else {
+			cleanAddress = strings.TrimPrefix(address, "http://")
+		}
+		logger.Info("detected insecure scheme, using plaintext connection to %s", cleanAddress)
+	} else if strings.HasSuffix(address, ":443") {
+		// Fallback: assume TLS if port 443 is used without explicit scheme
+		creds := credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: false,
+		})
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		logger.Info("detected port 443 without scheme, enabling TLS for gRPC connection to %s", cleanAddress)
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		logger.Info("no TLS indicators found, using plaintext gRPC connection to %s", cleanAddress)
+	}
+
+	conn, err := grpc.Dial(cleanAddress, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dialing master: %w", err)
 	}

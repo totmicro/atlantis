@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/logging"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
@@ -169,22 +171,26 @@ func (ac *AgentController) connect() error {
 	var opts []grpc.DialOption
 
 	if ac.config.UseTLS {
-		// TODO: Add TLS credentials
-		ac.logger.Warn("TLS not yet implemented, using insecure connection")
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Use system TLS certificates for secure connection
+		creds := credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: false, // Validate server certificate
+		})
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		ac.logger.Info("using TLS for gRPC connection")
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		ac.logger.Info("using insecure gRPC connection")
 	}
 
 	// Add metadata interceptor for authentication
 	opts = append(opts, grpc.WithUnaryInterceptor(ac.unaryAuthInterceptor))
 	opts = append(opts, grpc.WithStreamInterceptor(ac.streamAuthInterceptor))
 
-	// Add keepalive to detect dead connections faster
+	// Add keepalive to detect dead connections (must be >= server MinTime of 20s)
 	opts = append(opts,
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                10 * time.Second,
-			Timeout:             3 * time.Second,
+			Time:                30 * time.Second, // Send ping every 30s (server MinTime is 20s)
+			Timeout:             10 * time.Second, // Wait 10s for ping ack
 			PermitWithoutStream: true,
 		}),
 	)
@@ -324,8 +330,11 @@ func (ac *AgentController) reconnect() error {
 	var opts []grpc.DialOption
 
 	if ac.config.UseTLS {
-		ac.logger.Warn("TLS not yet implemented, using insecure connection")
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Use system TLS certificates for secure connection
+		creds := credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: false, // Validate server certificate
+		})
+		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
@@ -334,11 +343,11 @@ func (ac *AgentController) reconnect() error {
 	opts = append(opts, grpc.WithUnaryInterceptor(ac.unaryAuthInterceptor))
 	opts = append(opts, grpc.WithStreamInterceptor(ac.streamAuthInterceptor))
 
-	// Add keepalive to detect dead connections faster
+	// Add keepalive to detect dead connections (must be >= server MinTime of 20s)
 	opts = append(opts,
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                10 * time.Second,
-			Timeout:             3 * time.Second,
+			Time:                30 * time.Second, // Send ping every 30s (server MinTime is 20s)
+			Timeout:             10 * time.Second, // Wait 10s for ping ack
 			PermitWithoutStream: true,
 		}),
 	)

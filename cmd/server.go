@@ -130,6 +130,8 @@ const (
 	DefaultExecutionModeFlag         = "default-execution-mode"
 	JobNoAgentMaxRetriesFlag         = "job-no-agent-max-retries"
 	JobNoAgentRetryIntervalFlag      = "job-no-agent-retry-interval"
+	StaleJobCheckIntervalFlag        = "stale-job-check-interval"
+	StaleJobTimeoutFlag              = "stale-job-timeout"
 	IncludeGitUntrackedFiles         = "include-git-untracked-files"
 	APISecretFlag                    = "api-secret"
 	HidePrevPlanComments             = "hide-prev-plan-comments"
@@ -371,6 +373,14 @@ var stringFlags = map[string]stringFlag{
 	JobNoAgentRetryIntervalFlag: {
 		description:  "Interval in seconds between retry attempts when no matching agents are available (distributed mode only).",
 		defaultValue: "60",
+	},
+	StaleJobCheckIntervalFlag: {
+		description:  "Interval in seconds to check for stale assigned jobs (distributed mode only).",
+		defaultValue: "60",
+	},
+	StaleJobTimeoutFlag: {
+		description:  "Time in seconds before an assigned job is considered stale and requeued (distributed mode only).",
+		defaultValue: "120",
 	},
 	GHHostnameFlag: {
 		description:  "Hostname of your Github Enterprise installation. If using github.com, no need to set.",
